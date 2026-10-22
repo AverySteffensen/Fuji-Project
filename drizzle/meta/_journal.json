@@ -1,0 +1,13 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1792688705134,
+      "tag": "0000_futuristic_doctor_doom",
+      "breakpoints": true
+    }
+  ]
+}
