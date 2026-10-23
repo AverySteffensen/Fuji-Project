@@ -1,5 +1,6 @@
 import {
   DEPARTMENTS,
+  PRIORITIES,
   type Purchase,
   type Member,
   type Role,
@@ -117,8 +118,8 @@ export function sanitizeRequest(input: Record<string, any>): Partial<Purchase> {
   if (!["Facilities", "Lease", "Other", "Raw materials"].includes(purchaseType))
     throw new BusinessError("Select a purchase type.");
   const priority = input.priority;
-  if (!["Normal", "Rush"].includes(priority))
-    throw new BusinessError("Select Normal or Rush priority.");
+  if (!PRIORITIES.includes(priority))
+    throw new BusinessError("Select Low, Medium, or High priority.");
   const explanation = text(input.explanation);
   const supplier = text(input.supplier, 200);
   const neededBy = date(input.neededBy);

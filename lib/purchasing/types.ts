@@ -26,6 +26,8 @@ export const ROLES = [
   "admin",
 ] as const;
 export type Role = (typeof ROLES)[number];
+export const PRIORITIES = ["Low", "Medium", "High"] as const;
+export type Priority = (typeof PRIORITIES)[number];
 export const ROLE_NAMES: Record<Role, string> = {
   employee: "Employee",
   supervisor: "Supervisor",
@@ -87,7 +89,7 @@ export type Purchase = {
   requesterName: string;
   department: string;
   purchaseType: "Facilities" | "Lease" | "Other" | "Raw materials";
-  priority: "Normal" | "Rush";
+  priority: Priority;
   neededBy: string;
   explanation: string;
   supplier: string;

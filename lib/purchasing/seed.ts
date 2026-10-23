@@ -123,7 +123,7 @@ export function buildSeed() {
           : n % 13 === 0
             ? "Lease"
             : "Facilities",
-      priority: n % 7 === 0 ? "Rush" : "Normal",
+      priority: n % 7 === 0 ? "High" : n % 4 === 0 ? "Low" : "Medium",
       neededBy: new Date(d.getTime() + (7 + (n % 10)) * 86400000)
         .toISOString()
         .slice(0, 10),
@@ -131,7 +131,7 @@ export function buildSeed() {
       supplier: c[1],
       supplierReason:
         "Meets the required specification and provides a competitive lead time.",
-      contactName: "Sample sales representative",
+      contactName: "Sales team",
       contactEmail: "sales@example.test",
       contactPhone: "",
       quoteNumber: `Q-26-${8100 + n}`,
@@ -181,7 +181,7 @@ export function buildSeed() {
       p.referenceInspired = true;
       p.purchaseType = "Other";
       p.explanation =
-        "Reference-inspired example: 40 rolls of shrink wrap at $60.93 per roll. Supplier and all workflow details are fictional.";
+        "40 rolls of shrink wrap at $60.93 per roll for packaging operations.";
       p.quotes.push({
         vendor: "Harbor Packaging",
         number: "ALT-100",
@@ -191,12 +191,12 @@ export function buildSeed() {
     if (n === 3) {
       p.emergency = true;
       p.emergencyReason =
-        "Unexpected equipment interruption; emergency demonstration.";
+        "Unexpected equipment interruption. Replacement required to resume production.";
       p.verbalApproverId = "demo-plant";
       p.verbalApproverName = actor("plantmanager").name;
       p.verbalApprovedAt = at;
       p.neededBy = at.slice(0, 10);
-      p.priority = "Rush";
+      p.priority = "High";
     }
     if (n < 12) {
       if (n % 3 === 1)
@@ -228,7 +228,7 @@ export function buildSeed() {
           p,
           actor(role),
           new Date(d.getTime() + (step + 1) * 3600000).toISOString(),
-          "Sample approval",
+          "Purchase approved.",
         );
       }
       if (n % 4 !== 0) {
@@ -241,7 +241,7 @@ export function buildSeed() {
           purchaserInitials: "AP",
           orderedAt: orderDate,
           carrier: n % 2 ? "UPS" : "FedEx",
-          trackingNumber: `SAMPLE-${90000 + n}`,
+          trackingNumber: `TRK-${90000 + n}`,
           trackingUrl: "",
           expectedAt: new Date(d.getTime() + 4 * 86400000)
             .toISOString()
@@ -254,7 +254,8 @@ export function buildSeed() {
             n > 30
               ? new Date(d.getTime() + 4 * 86400000).toISOString().slice(0, 10)
               : "",
-          notes: "Fictional order for demonstration only.",
+          notes:
+            "Deliver to receiving and reference the purchase order number.",
         };
         p.updatedAt =
           (p.order.invoiceAt || p.order.receivedAt || p.order.orderedAt) +
@@ -269,7 +270,7 @@ export function buildSeed() {
       actorName: p.requesterName,
       actorId: p.requesterId,
       at: p.submittedAt,
-      note: "Fictional sample record.",
+      note: "Purchase proposal submitted.",
       revision: 1,
     });
     for (const [i, a] of p.approvals.entries())
