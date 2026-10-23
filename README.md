@@ -1,36 +1,41 @@
-# Fuji Purchasing Hub
+# Fuji Purchasing Register
 
-A complete MIS 4173 Team 2 web app for purchase proposals, dated management approvals, accounting purchase orders, delivery tracking, and searchable purchase history. It implements Chase Burton's email requirements and the supplied purchase proposal and purchasing procedures.
+Purchase requests, dated approvals, purchase orders, and delivery tracking in a full-width spreadsheet interface.
 
-**Private app:** https://fuji-purchasing-hub-team2.flowyrice1.chatgpt.site
+## Use either version
 
-## What is included
+| Version | GitHub branch | App |
+| --- | --- | --- |
+| Original workspace | `main` | https://fuji-purchasing-hub-team2.flowyrice1.chatgpt.site |
+| Purchasing register | `spreadsheet-interface` | https://fuji-purchasing-register.flowyrice1.chatgpt.site |
 
-- Purchase proposals with department, priority, needed-by date, item/part descriptions, quantities, prices, business explanation, supplier and contact details, quote number, three competitive quotes, and project manager.
-- Server-enforced approval routes, exact decision timestamps, emergency verbal approval records, supervisor absence, and rejection reasons.
-- Revision and resubmission with a complete prior-version snapshot and an append-only activity history.
-- Accounting-only PO, account number, purchaser initials, order date, carrier, shipment tracking, delivery, and invoice-to-accounting dates.
-- Private file attachments (PDF, JPG, PNG, or text, up to 10 MB each).
-- Search, status/department/priority/order-stage filters, reorder from a prior purchase, summary reporting, and print-to-PDF through the browser.
-- Excel/Google Sheets CSV exports: request summary, purchase line items, and approval activity. Full JSON exports include quotes and prior revisions.
-- Persistent D1 records and R2 files. Browser storage is not used for purchasing records.
-- Sixty-four fictional sample requests with 72 line items, varied approval states, orders, departments, and suppliers. The shrink-wrap item and amount are reference-inspired; every sample's people, supplier, decisions, and orders are simulated.
+The register is a separate Site with its own database and attachments. Saving a request in one version does not update the other. The original branch and publication are preserved.
 
-## Try the workflow
+## Interface and exports
 
-The hosted app requires ChatGPT sign-in and starts owner-private. The first authorized visitor becomes the workspace owner.
+- Top tabs for Purchase requests, Approvals, Purchase history, Purchasing policy, and People & access.
+- A full-width grid with larger request text, sortable headings, and 25, 50, or 100 rows per page.
+- Search requests, items, parts, suppliers, quotes, requesters, and PO numbers.
+- Filter by department, status, order stage, and Low / Medium / High priority.
+- Inclusive From / Through filters for submitted, needed-by, approved, ordered, expected, and received dates. Presets include the last 7 or 30 days, current month, and current year.
+- Overdue requests appear in red when their needed-by date is before today and they remain unreceived. Rejected requests are excluded. Dates use America/New_York.
+- Every tab has an Export data button that downloads a native `.xlsx` workbook.
 
-1. Open the app and choose **Try employee view** (Maya Thompson).
-2. Create a proposal or revise one of Maya's rejected sample requests.
-3. Use **Viewing as** to switch to Daniel Brooks (Supervisor), Morgan Blake (Controller), and Natalie Reed (Vice President), as required by the displayed approval route.
-4. Switch to Alex Parker (Accounting) and record the PO, order date, and tracking details.
-5. Search **Purchase history**, then use **Export data** to download a CSV.
+Request exports follow the current tab, filters, and sort order across all pages. The workbook includes Requests, Line items, Approvals, Activity, and Export details. Currency and dates retain native Excel types. Tables support filtering and pivot analysis, headings and identifiers are frozen, and overdue formatting recalculates when opened.
 
-Demo personas can only see and change sample records. A proposal submitted as the workspace owner is a separate, non-sample record. Demo switching is available only to the authenticated owner; it is not a way for another visitor to obtain a role.
+Use Requests for complete request totals. Line items contains individual line totals, excluding request-level freight and tax. User text is exported as literal strings and cannot execute spreadsheet formulas.
 
-## Local development
+## Purchase workflow
 
-Use Node.js 24 or newer and the pnpm version declared in `package.json`.
+The forms retain department, needed-by date, item descriptions, part numbers, quantities, prices, freight, tax, business explanations, suppliers, contacts, quote numbers, competitive quotes, and project managers.
+
+Server-enforced approval routes, emergency handling, rejection reasons, revisions, attachments, and dated history remain available. Accounting records PO numbers, account numbers, purchaser initials, order dates, shipment tracking, receipt dates, and invoice dates.
+
+The owner can use Workspace role to review the built-in employee, manager, and Accounting workflows. Role switching remains owner-only. Real users require Site access and a matching membership under People & access.
+
+## Development
+
+Use Node.js 24 or newer and pnpm 11.25.0.
 
 ```sh
 pnpm install --frozen-lockfile
@@ -38,7 +43,7 @@ pnpm db:local
 pnpm dev
 ```
 
-The portable starter prints its local URL, normally `http://localhost:5173`. Local sign-in is provided by the portable Sites starter; open its **Sign in with ChatGPT** link. Hosted sign-in remains platform-managed. Managed Linux environments use their supplied preview supervisor rather than a separate development server.
+The portable URL is normally `http://localhost:5173`. The starter provides local sign-in on loopback hosts. Hosted sign-in is platform managed. Browser-based Codespaces requires forwarded-host development authentication configuration.
 
 ```sh
 pnpm test
@@ -46,31 +51,19 @@ pnpm typecheck
 pnpm build
 ```
 
-`pnpm db:local` applies pending schema migrations to the local database and is safe to run again. Local and hosted data are separate. The first signed-in API request seeds the fictional dataset once. `data/sample-requests.json` is a reproducible source dataset, not a backup of live user data.
+Local and hosted records are separate. `pnpm db:local` safely applies pending migrations. The priority migration converts older Normal records to Medium and Rush records to High, including prior-revision snapshots. New requests accept only Low, Medium, or High.
 
-To change the schema, edit `db/schema.ts`, run `pnpm db:generate`, inspect the new migration, and run `pnpm db:local`. Keep applied migrations immutable. Samples remain outside schema migrations.
+The reproducible seed dataset is in `data/sample-requests.json`. Source provenance remains in `docs/requirements.md`. User-facing school-project notes and sample-data banners are removed.
 
-## Roles and collaboration
+## Source map
 
-Employees see their own requests. Supervisors review their assigned departments. Controller, VP, Plant Manager, Treasurer, and Accounting have operational visibility; approvals and order writes still require the correct role. Self-approval is blocked.
+- `app/components/PurchasingApp.tsx`: register, tabs, purchase forms, reviews, orders, and members.
+- `app/register.css`: spreadsheet interface and responsive styles.
+- `lib/purchasing/register.ts`: filtering, sorting, and overdue classification.
+- `lib/purchasing/xlsx.ts`: native Excel export.
+- `lib/purchasing/domain.ts`: validation and purchasing rules.
+- `lib/purchasing/server.ts`: identity, persistence, scoped records, and audit writes.
+- `drizzle/`: schema migrations and priority conversion.
+- `tests/`: business, API, date, migration, and workbook tests.
 
-Real users require both platform access to this private Site and a matching membership in **People & access**. The owner can add or update operational memberships without sending invitations. Once a real member signs in, the membership binds to the stable Site user ID. Only the platform owner can switch among demo personas. Changing a member's role preserves their identity and existing requests.
-
-## Approval policy decisions
-
-The 2012 procedure overlaps at exactly $150. The implementation assigns $150 to the basic tier. The next tier requires a supervisor plus either Controller or VP. High-value requests require all three. Raw materials require Plant Manager or Controller. These interpretations, including sequential routing and the emergency rules, are explicitly documented in [the requirements](docs/requirements.md).
-
-## Project map
-
-- `app/components/PurchasingApp.tsx`: responsive workspace, forms, review screens, history, reports, exports, and member administration.
-- `app/api/`: protected workspace, proposal, approval, order, member, and attachment endpoints.
-- `lib/purchasing/domain.ts`: validation, routing, role checks, dates, calculations, and safe CSV generation.
-- `lib/purchasing/server.ts`: identity, persistence, optimistic concurrency, and transactional audit writes.
-- `lib/purchasing/seed.ts`: deterministic fictional dataset.
-- `db/schema.ts` and `drizzle/`: database schema and generated migrations.
-- `tests/`: business-rule tests and real API-handler tests using SQLite through a D1-compatible adapter.
-- `docs/requirements.md`: field mapping, acceptance criteria, assumptions, and export guidance.
-- `docs/architecture.md`: data and authorization design.
-- `docs/review.md`: final review findings, fixes, validation, and limits.
-
-The app retains the supported Sites/Vinext starter integrations for Cloudflare hosting. `.openai/hosting.json` contains binding names and Site identity, never credentials. Runtime keys, local databases, files, caches, and deployment archives are ignored by Git. The supplied source PDFs, real signatures, and private contact details are not included in this repository.
+Sites/Vinext, D1, and R2 integrations are retained. Credentials, runtime state, original source PDFs, and signatures are excluded from Git.
