@@ -89,7 +89,7 @@ const read = async (r: Response) => ({
 const input = {
   department: "Packaging (90)",
   purchaseType: "Facilities",
-  priority: "Rush",
+  priority: "High",
   neededBy: "2026-11-01",
   supplier: "Test Supplier",
   explanation: "API integration test",
