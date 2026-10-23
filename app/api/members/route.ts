@@ -34,7 +34,7 @@ export async function POST(req: Request) {
       : undefined;
     if (existing && (existing.demo || existing.roles.includes("admin")))
       throw new BusinessError(
-        "The owner and sample personas cannot be changed with this form.",
+        "The owner and built-in workspace roles cannot be changed with this form.",
       );
     const m: Member = {
       id: existing?.id ?? crypto.randomUUID(),
