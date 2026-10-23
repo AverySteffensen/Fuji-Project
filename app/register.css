@@ -1,0 +1,858 @@
+/* Purchasing register: a full-width, spreadsheet-style workspace. */
+:root {
+  --green: #217346;
+  --dark-green: #185c37;
+  --ink: #25332d;
+  --muted: #627168;
+  --line: #dce3df;
+  --bg: #f4f6f4;
+  --radius: 5px;
+  font-family: Aptos, Calibri, "Segoe UI", Arial, sans-serif;
+}
+body {
+  font-size: 15px;
+  background: var(--bg);
+}
+.register-shell {
+  min-height: 100vh;
+}
+.register-header {
+  background: white;
+  border-bottom: 1px solid #cdd7d0;
+}
+.register-titlebar {
+  min-height: 76px;
+  padding: 16px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+}
+.register-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  color: var(--ink);
+}
+.register-logo {
+  width: 41px;
+  height: 43px;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: var(--green);
+  border-radius: 5px;
+}
+.register-brand strong {
+  font-size: 23px;
+  font-weight: 750;
+  letter-spacing: 1.6px;
+  line-height: 1;
+  display: block;
+}
+.register-brand small {
+  display: block;
+  font-size: 14px;
+  color: #5c6a61;
+  margin-top: 5px;
+}
+.register-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.register-account .user-avatar {
+  background: #ecf2ed;
+  color: #346345;
+  width: 36px;
+  height: 36px;
+  font-size: 13px;
+}
+.register-account .persona-control {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.register-account .persona-control > span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: #68756d;
+}
+.register-account .persona-control select {
+  font-size: 14px;
+  max-width: 340px;
+  min-height: 25px;
+  background: transparent;
+  border: 0;
+  color: #263c2e;
+}
+.register-tabs {
+  display: flex;
+  gap: 5px;
+  padding: 0 28px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.register-tabs button {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: transparent;
+  padding: 14px 17px 13px;
+  color: #5a685e;
+  font-size: 15px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  white-space: nowrap;
+}
+.register-tabs button:hover {
+  color: var(--green);
+  background: #f5f8f5;
+}
+.register-tabs button.active {
+  color: var(--green);
+  border-bottom-color: var(--green);
+  background: #f0f6f0;
+}
+.register-tabs button > span {
+  min-width: 22px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e0ebe2;
+  color: #275638;
+  font-size: 12px;
+}
+.register-content {
+  padding: 24px 28px 14px;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+.register-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+.register-heading h1 {
+  font-size: 27px;
+  font-weight: 650;
+  letter-spacing: -0.5px;
+  margin: 0 0 5px;
+}
+.register-heading p {
+  color: #657168;
+  font-size: 15px;
+}
+.heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-shrink: 0;
+}
+.btn {
+  border-radius: 5px;
+  min-height: 41px;
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.btn.primary {
+  background: var(--green);
+  border-color: var(--green);
+  color: white;
+}
+.btn.primary:hover {
+  background: var(--dark-green);
+}
+.export-btn {
+  border-color: #a5b8a9;
+  color: #2c5d3c;
+  background: #fff;
+}
+.file-type {
+  font-size: 11px;
+  color: #627668;
+  border-left: 1px solid #d8e2db;
+  padding-left: 8px;
+  margin-left: 2px;
+}
+.register-summary {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  margin: 0 0 14px;
+  min-height: 32px;
+  color: #657169;
+  font-size: 14px;
+  flex-wrap: wrap;
+}
+.register-summary > span,
+.register-summary > button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.register-summary strong {
+  color: #344339;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+}
+.register-summary button {
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #9f302a;
+  padding: 5px 8px;
+  margin-left: -8px;
+  font-size: 14px;
+}
+.register-summary button strong {
+  color: #a52c25;
+}
+.register-summary button:hover,
+.register-summary button.active {
+  background: #fff0ed;
+  border-color: #e5bbb6;
+}
+.overdue-key {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #c33c32;
+  display: inline-block;
+}
+.register-summary .summary-value {
+  margin-left: auto;
+}
+.register-sheet {
+  background: white;
+  border: 1px solid #ccd7cf;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 2px 5px #18362405;
+}
+.register-filters {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 15px 16px 13px;
+}
+.register-filters label,
+.register-date-filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: #617065;
+  font-weight: 600;
+}
+.register-filters select,
+.register-date-filters select,
+.register-date-filters input,
+.register-pagination select {
+  height: 37px;
+  border: 1px solid #ced9d1;
+  border-radius: 4px;
+  padding: 7px 10px;
+  background: white;
+  color: #34433a;
+  font-size: 14px;
+  min-width: 115px;
+  max-width: 220px;
+}
+.register-filters label:first-of-type select {
+  min-width: 125px;
+}
+.register-search {
+  flex: 1;
+  min-width: 250px;
+  max-width: none;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 1px solid #ced9d1;
+  border-radius: 4px;
+  padding: 0 10px;
+  color: #758579;
+}
+.register-search input {
+  border: 0;
+  outline: none;
+  font-size: 15px;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+}
+.register-search:focus-within {
+  outline: 2px solid #83b591;
+  outline-offset: 1px;
+}
+.register-search input::placeholder {
+  color: #7a877e;
+}
+.register-date-filters {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 0 16px 15px;
+}
+.register-date-filters input {
+  width: 151px;
+}
+.register-date-filters label > select {
+  min-width: 140px;
+}
+.register-date-filters .direction-btn {
+  height: 37px;
+  min-height: 37px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.clear-register {
+  height: 37px;
+  margin-left: auto;
+  font-size: 13px;
+  padding: 6px;
+  white-space: nowrap;
+}
+.range-error {
+  color: #b42318;
+  padding: 0 16px 14px;
+  font-size: 14px;
+}
+.register-grid-wrap {
+  overflow: auto;
+  max-height: calc(100vh - 410px);
+  min-height: 320px;
+  scrollbar-width: thin;
+  scrollbar-color: #b5c7ba #f2f5f2;
+}
+.register-table {
+  width: 100%;
+  min-width: 1460px;
+  border-collapse: separate;
+  border-spacing: 0;
+  table-layout: auto;
+  font-size: 16px;
+}
+.register-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.register-table th {
+  background: #edf2ee;
+  color: #425447;
+  font-size: 13px;
+  font-weight: 600;
+  height: 44px;
+  border-bottom: 1px solid #bccbbf;
+  border-right: 1px solid #d4dfd6;
+  padding: 0 13px;
+  text-align: left;
+  white-space: nowrap;
+}
+.register-table th button {
+  padding: 0;
+  width: 100%;
+  min-height: 43px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  display: flex;
+  gap: 13px;
+  justify-content: space-between;
+  align-items: center;
+}
+.register-table th button > span {
+  color: #8a9d8e;
+  font-size: 13px;
+  font-weight: 400;
+}
+.register-table th[aria-sort="ascending"],
+.register-table th[aria-sort="descending"] {
+  background: #deebe1;
+  color: #225534;
+}
+.register-table th[aria-sort="ascending"] button > span,
+.register-table th[aria-sort="descending"] button > span {
+  color: #217346;
+  font-weight: 700;
+}
+.register-table td {
+  border-bottom: 1px solid #e0e7e1;
+  border-right: 1px solid #edf0ed;
+  padding: 13px 13px;
+  color: #34433b;
+  font-size: 16px;
+  line-height: 1.4;
+  vertical-align: middle;
+  height: 73px;
+}
+.register-table tbody tr:nth-child(even) td {
+  background: #f8faf8;
+}
+.register-table tbody tr:hover td {
+  background: #edf5ef;
+}
+.register-table .row-index {
+  text-align: center;
+  width: 42px;
+  min-width: 42px;
+  padding-left: 10px;
+  padding-right: 10px;
+  color: #92a095;
+  font-size: 12px;
+  background: #f2f5f2;
+}
+.register-table .request-id-cell {
+  width: 144px;
+  min-width: 144px;
+}
+.register-table .request-id-cell button {
+  color: #306746;
+  font-size: 15px;
+  font-weight: 600;
+  padding: 0;
+  background: none;
+  border: 0;
+  text-align: left;
+  white-space: nowrap;
+}
+.register-table .request-id-cell button:hover,
+.register-table .request-item-cell button:hover {
+  text-decoration: underline;
+}
+.register-table .request-item-cell {
+  min-width: 245px;
+  max-width: 340px;
+}
+.register-table .request-item-cell button {
+  display: block;
+  text-align: left;
+  padding: 0;
+  background: none;
+  border: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: #27392f;
+}
+.register-table small {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: #748176;
+  font-weight: 400;
+  white-space: normal;
+}
+.register-table .amount-cell {
+  font-size: 16px;
+  font-weight: 600;
+}
+.register-table .date-cell {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.register-table .order-cell {
+  min-width: 155px;
+  font-size: 14px;
+}
+.register-table .order-cell small {
+  font-size: 12px;
+}
+.register-table .open-col {
+  width: 38px;
+  padding: 0;
+}
+.register-table td:last-child {
+  padding: 5px;
+  border-right: 0;
+}
+.badge {
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 4px;
+  padding: 5px 8px;
+  gap: 5px;
+  line-height: 1.15;
+}
+.badge.low {
+  background: #edf2ed;
+  color: #5d7162;
+}
+.badge.medium {
+  background: #eef2fc;
+  color: #526997;
+}
+.badge.high {
+  background: #fff0db;
+  color: #9e5d0e;
+}
+.badge.overdue {
+  background: #fce6e2;
+  color: #aa2b22;
+}
+.register-table .overdue-row td,
+.register-table .overdue-row:nth-child(even) td {
+  background: #fff5f3;
+  color: #ad332a;
+}
+.register-table .overdue-row td:first-child {
+  box-shadow: inset 3px 0 #c74639;
+  color: #b47e76;
+}
+.register-table .overdue-row .request-id-cell button,
+.register-table .overdue-row .request-item-cell button,
+.register-table .overdue-row small {
+  color: #ad332a;
+}
+.register-table .overdue-row:hover td {
+  background: #ffede8;
+}
+.overdue-label {
+  display: block;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.45px;
+  font-weight: 650;
+  margin-top: 5px;
+  color: #b43126;
+}
+.overdue-detail h2,
+.overdue-detail .detail-amount {
+  color: #ad332a;
+}
+.register-pagination {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-top: 1px solid #ccd7cf;
+  font-size: 13px;
+  color: #6f7d72;
+}
+.register-pagination label {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.register-pagination select {
+  min-width: 63px;
+  height: 31px;
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.register-pagination .row {
+  gap: 12px;
+}
+.register-pagination .row span {
+  font-variant-numeric: tabular-nums;
+  min-width: 45px;
+  text-align: center;
+}
+.register-footer {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 18px;
+  font-size: 12px;
+  color: #8a978d;
+}
+.register-policy {
+  border-radius: 5px;
+  max-width: 1080px;
+}
+.register-policy th {
+  font-size: 14px;
+  color: #3d5745;
+}
+.register-policy td {
+  font-size: 16px;
+  padding: 20px 24px;
+}
+.register-policy .policy-notes {
+  padding: 24px;
+}
+.register-policy .policy-notes p {
+  font-size: 15px;
+  max-width: 920px;
+}
+.people-grid {
+  grid-template-columns: minmax(420px, 1.4fr) minmax(340px, 1fr);
+}
+.people-grid .panel {
+  border-radius: 5px;
+}
+.member-list strong {
+  font-size: 16px;
+}
+.member-list small {
+  font-size: 13px;
+}
+.modal {
+  border-radius: 7px;
+}
+.modal.wide {
+  width: 1040px;
+}
+.modal-head h2 {
+  font-size: 19px;
+}
+.modal label,
+.people-form label {
+  font-size: 14px;
+}
+.modal input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+.modal select,
+.modal textarea {
+  font-size: 15px;
+  min-height: 40px;
+  border-radius: 4px;
+}
+.detail-title h2 {
+  font-size: 25px;
+  line-height: 1.3;
+}
+.detail-title p {
+  font-size: 14px;
+}
+.detail-table td,
+.detail-table th {
+  font-size: 15px;
+  padding: 13px 15px;
+}
+.detail-columns p {
+  font-size: 15px;
+  line-height: 1.7;
+}
+.date-strip strong {
+  font-size: 15px;
+}
+.date-strip span {
+  font-size: 12px;
+}
+.modal .section-label {
+  font-size: 15px;
+}
+.modal .form-intro p {
+  font-size: 16px;
+}
+.icon-btn {
+  border-radius: 4px;
+}
+.register-content > .alert {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+@media (min-width: 1800px) {
+  .register-grid-wrap {
+    max-height: calc(100vh - 395px);
+  }
+  .register-table td {
+    height: 76px;
+    font-size: 17px;
+  }
+  .register-table .request-item-cell button {
+    font-size: 17px;
+  }
+}
+@media (max-width: 1100px) {
+  .register-content {
+    padding: 20px 18px 14px;
+  }
+  .register-titlebar {
+    padding: 15px 18px;
+  }
+  .register-tabs {
+    padding: 0 18px;
+  }
+  .register-tabs button {
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .register-filters label {
+    flex: 1;
+  }
+  .register-filters label select {
+    max-width: none;
+    width: 100%;
+  }
+  .register-search {
+    min-width: 100%;
+  }
+  .register-grid-wrap {
+    max-height: 62vh;
+  }
+  .people-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 650px) {
+  .register-titlebar {
+    padding: 13px 14px;
+    gap: 10px;
+    min-height: 76px;
+  }
+  .register-brand strong {
+    font-size: 21px;
+  }
+  .register-brand small {
+    font-size: 12px;
+  }
+  .register-logo {
+    width: 33px;
+    height: 38px;
+  }
+  .register-account .user-avatar {
+    display: none;
+  }
+  .register-account .persona-control select {
+    max-width: 155px;
+    font-size: 12px;
+  }
+  .register-tabs {
+    padding: 0 6px;
+    gap: 0;
+  }
+  .register-tabs button {
+    font-size: 13px;
+    padding: 12px 11px;
+    gap: 6px;
+  }
+  .register-tabs button svg {
+    width: 15px;
+  }
+  .register-content {
+    padding: 18px 10px 12px;
+  }
+  .register-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 13px;
+    margin-bottom: 14px;
+  }
+  .register-heading h1 {
+    font-size: 24px;
+  }
+  .register-heading p {
+    font-size: 14px;
+  }
+  .heading-actions {
+    width: 100%;
+  }
+  .heading-actions .btn {
+    flex: 1;
+    justify-content: center;
+    font-size: 13px;
+  }
+  .register-summary {
+    gap: 12px;
+    font-size: 12px;
+  }
+  .register-summary strong {
+    font-size: 14px;
+  }
+  .register-summary .summary-value {
+    margin-left: 0;
+    width: 100%;
+  }
+  .register-summary button {
+    font-size: 12px;
+  }
+  .register-filters {
+    padding: 12px 10px;
+    gap: 9px;
+  }
+  .register-filters label {
+    flex: 1 1 42%;
+  }
+  .register-filters label select {
+    font-size: 13px;
+    min-width: 0;
+    max-width: none;
+  }
+  .register-search {
+    min-width: 100%;
+  }
+  .register-search input {
+    font-size: 14px;
+  }
+  .register-date-filters {
+    padding: 0 10px 12px;
+    gap: 10px;
+  }
+  .register-date-filters label {
+    flex: 1 1 42%;
+  }
+  .register-date-filters input,
+  .register-date-filters label > select {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    font-size: 13px;
+  }
+  .register-grid-wrap {
+    min-height: 300px;
+    max-height: 66vh;
+  }
+  .register-table td {
+    font-size: 16px;
+  }
+  .register-pagination {
+    padding: 10px;
+    gap: 8px;
+    font-size: 11px;
+    flex-wrap: wrap;
+  }
+  .register-pagination .row {
+    gap: 3px;
+  }
+  .register-pagination label {
+    font-size: 11px;
+  }
+  .register-footer {
+    font-size: 10px;
+  }
+  .register-policy td {
+    font-size: 14px;
+    padding: 14px;
+  }
+  .register-policy .policy-notes {
+    padding: 16px;
+  }
+  .register-policy .policy-notes p {
+    font-size: 14px;
+  }
+  .modal.wide {
+    width: 100%;
+  }
+  .detail-title h2 {
+    font-size: 21px;
+  }
+}
+@media print {
+  .register-header,
+  .register-content,
+  .toast {
+    display: none !important;
+  }
+  .modal-backdrop {
+    display: block;
+  }
+}
