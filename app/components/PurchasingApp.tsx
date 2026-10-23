@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import {
   DEPARTMENTS,
+  PRIORITIES,
   ROLE_NAMES,
   type Workspace,
   type Purchase,
@@ -50,17 +51,28 @@ import {
   approvalSteps,
   nextStep,
   hasRole,
-  exportRows,
-  toCSV,
   emergencyDue,
   businessDate,
 } from "@/lib/purchasing/domain";
+import {
+  DEFAULT_FILTERS,
+  DATE_FIELDS,
+  isOverdue,
+  selectRequests,
+  type RegisterFilters,
+  type DateField,
+  type SortField,
+} from "@/lib/purchasing/register";
+import {
+  createXlsx,
+  purchaseSheets,
+  XLSX_MIME,
+  type ExcelSheet,
+} from "@/lib/purchasing/xlsx";
 const views = [
-  ["overview", "Overview", LayoutDashboard],
   ["requests", "Purchase requests", ClipboardList],
   ["approvals", "Approvals", ShieldCheck],
   ["history", "Purchase history", History],
-  ["reports", "Reports & exports", BarChart3],
   ["policy", "Purchasing policy", BookOpen],
   ["people", "People & access", Users],
 ] as const;
@@ -180,7 +192,7 @@ function Modal({
 const blank = () => ({
   department: "Packaging (90)",
   purchaseType: "Facilities",
-  priority: "Normal",
+  priority: "Medium",
   neededBy: businessDate(new Date(Date.now() + 7 * 86400000).toISOString()),
   explanation: "",
   supplier: "",
@@ -314,8 +326,9 @@ function RequestForm({
                 value={f.priority}
                 onChange={(e) => field("priority", e.target.value)}
               >
-                <option>Normal</option>
-                <option>Rush</option>
+                {PRIORITIES.map((priority) => (
+                  <option key={priority}>{priority}</option>
+                ))}
               </select>
             </label>
           </div>
@@ -875,7 +888,9 @@ function RequestDetail({
   return (
     <Modal title="Purchase request" onClose={onClose} wide>
       <div className="modal-body detail-body">
-        <div className="detail-title">
+        <div
+          className={"detail-title " + (isOverdue(p) ? "overdue-detail" : "")}
+        >
           <div>
             <span className="overline">
               {p.number} <span className="revision">REVISION {p.revision}</span>
@@ -890,18 +905,11 @@ function RequestDetail({
             {money(p.total)}
             <div>
               <Badge value={p.status} />
-              {p.priority === "Rush" && <Badge value="Rush" />}
+              <Badge value={p.priority} />
+              {isOverdue(p) && <Badge value="Overdue" />}
             </div>
           </div>
         </div>
-        {p.sample && (
-          <div className="sample-note">
-            <span className="sample-dot" /> Fictional sample record
-            {p.referenceInspired
-              ? " · Item and amount inspired by the supplied shrink-wrap example. All workflow details are simulated."
-              : ". Names, suppliers, dates, and orders are for demonstration."}
-          </div>
-        )}
         <div className="date-strip">
           <div>
             <span>Needed by</span>
@@ -1283,39 +1291,43 @@ function RequestDetail({
     </Modal>
   );
 }
+
 export default function PurchasingApp() {
-  const [w, setW] = useState<Workspace | null>(null),
-    [actor, setActor] = useState(""),
-    [view, setView] = useState("overview"),
-    [loading, setLoading] = useState(true),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [toast, setToast] = useState(""),
-    [search, setSearch] = useState(""),
-    [status, setStatus] = useState("All statuses"),
-    [dept, setDept] = useState("All departments"),
-    [priority, setPriority] = useState("All priorities"),
-    [fulfillment, setFulfillment] = useState("All order stages"),
-    [page, setPage] = useState(1),
-    [selected, setSelected] = useState<string | null>(null),
-    [form, setForm] = useState<{ source?: Purchase; revision: boolean } | null>(
-      null,
-    ),
-    [orderId, setOrderId] = useState<string | null>(null),
-    [exportOpen, setExportOpen] = useState(false),
-    [mobile, setMobile] = useState(false),
-    [exportType, setExportType] = useState("summary");
+  const [w, setW] = useState<Workspace | null>(null);
+  const [actor, setActor] = useState("");
+  const [view, setView] = useState("requests");
+  const [filters, setFilters] = useState<RegisterFilters>({
+    ...DEFAULT_FILTERS,
+  });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [form, setForm] = useState<{
+    source?: Purchase;
+    revision: boolean;
+  } | null>(null);
+  const [orderId, setOrderId] = useState<string | null>(null);
+  const [today, setToday] = useState(() =>
+    businessDate(new Date().toISOString()),
+  );
+  const patchFilters = (patch: Partial<RegisterFilters>) =>
+    setFilters((f) => ({ ...f, ...patch }));
   const request = async (path: string, init: RequestInit = {}) => {
-    const r = await fetch(path, {
+    const response = await fetch(path, {
       ...init,
       headers: {
         ...(actor ? { "x-demo-member": actor } : {}),
         ...init.headers,
       },
     });
-    const j: any = await r.json();
-    if (!r.ok) throw new Error(j.error || "Something went wrong.");
-    return j;
+    const data: any = await response.json();
+    if (!response.ok)
+      throw new Error(data.error || "The request could not be completed.");
+    return data;
   };
   const refresh = async () => {
     const data = await request("/api/workspace");
@@ -1327,6 +1339,7 @@ export default function PurchasingApp() {
     setLoading(true);
     setError("");
     setSelected(null);
+    setW(null);
     request("/api/workspace")
       .then((data) => {
         if (live) setW(data);
@@ -1343,76 +1356,80 @@ export default function PurchasingApp() {
   }, [actor]);
   useEffect(() => {
     setPage(1);
-  }, [search, status, dept, priority, fulfillment, view]);
+  }, [filters, view, pageSize, actor]);
   useEffect(() => {
     if (!toast) return;
-    const t = setTimeout(() => setToast(""), 4500);
-    return () => clearTimeout(t);
+    const timeout = setTimeout(() => setToast(""), 4500);
+    return () => clearTimeout(timeout);
   }, [toast]);
-  const navigate = (v: string) => {
-    setView(v);
-    setStatus("All statuses");
-    setDept("All departments");
-    setPriority("All priorities");
-    setFulfillment("All order stages");
-    setSearch("");
-    setPage(1);
-    setMobile(false);
-  };
-  const all = w?.requests ?? [];
-  const pending = all.filter((p) => p.status === "Pending"),
-    ready = all.filter((p) => p.status === "Approved" && !p.order),
-    ordered = all.filter((p) => p.order),
-    inbox = all.filter((p) => w && canApprove(w.me, p));
-  const filtered = useMemo(
-    () =>
-      all
-        .filter(
-          (p) =>
-            (view !== "approvals" || (!!w && canApprove(w.me, p))) &&
-            (view !== "history" || !!p.order) &&
-            (status === "All statuses" || p.status === status) &&
-            (dept === "All departments" || p.department === dept) &&
-            (priority === "All priorities" || p.priority === priority) &&
-            (fulfillment === "All order stages" ||
-              (fulfillment === "Not ordered" && !p.order) ||
-              (fulfillment === "Ordered" && !!p.order && !p.order.receivedAt) ||
-              (fulfillment === "Received" && !!p.order?.receivedAt)) &&
-            [
-              p.number,
-              p.title,
-              p.supplier,
-              p.requesterName,
-              p.quoteNumber,
-              p.order?.poNumber,
-              p.department,
-              p.contactName,
-              p.projectManager,
-              p.explanation,
-              p.items.map((i) => i.partNumber + " " + i.description).join(" "),
-              p.quotes.map((q) => q.vendor + " " + q.number).join(" "),
-            ]
-              .join(" ")
-              .toLowerCase()
-              .includes(search.toLowerCase()),
-        )
-        .sort((a, b) => b.submittedAt.localeCompare(a.submittedAt)),
-    [all, view, status, dept, priority, fulfillment, search, w],
+  useEffect(() => {
+    const update = () => setToday(businessDate(new Date().toISOString()));
+    const timer = setInterval(update, 60000);
+    document.addEventListener("visibilitychange", update);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", update);
+    };
+  }, []);
+  const effectiveFilters = useMemo(
+    () => ({ ...filters, view }),
+    [filters, view],
   );
-  const active = all.find((p) => p.id === selected),
-    order = all.find((p) => p.id === orderId),
-    visible = filtered.slice((page - 1) * 10, page * 10);
-  const totalSpend = ordered.reduce((s, p) => s + p.total, 0);
-  const deptSpend = Object.entries(
-    ordered.reduce(
-      (obj, p) => ({
-        ...obj,
-        [shortDept(p.department)]:
-          (obj[shortDept(p.department)] || 0) + p.total,
-      }),
-      {} as Record<string, number>,
-    ),
-  ).sort((a, b) => b[1] - a[1]);
+  const filtered = useMemo(
+    () => (w ? selectRequests(w, effectiveFilters, today) : []),
+    [w, effectiveFilters, today],
+  );
+  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pages);
+  const visible = filtered.slice(
+    (currentPage - 1) * pageSize,
+    currentPage * pageSize,
+  );
+  const active = w?.requests.find((p) => p.id === selected);
+  const order = w?.requests.find((p) => p.id === orderId);
+  const inboxCount = w?.requests.filter((p) => canApprove(w.me, p)).length ?? 0;
+  const overdueCount =
+    w?.requests.filter((p) => isOverdue(p, today)).length ?? 0;
+  const invalidRange = Boolean(
+    filters.from && filters.to && filters.from > filters.to,
+  );
+  const tableView = ["requests", "approvals", "history"].includes(view);
+  const navigate = (next: string) => {
+    setView(next);
+    setFilters({ ...DEFAULT_FILTERS, view: next });
+    setPage(1);
+  };
+  const sort = (field: SortField) =>
+    patchFilters({
+      sortField: field,
+      direction:
+        filters.sortField === field && filters.direction === "asc"
+          ? "desc"
+          : "asc",
+    });
+  const sortHeading = (label: string, field: SortField, numeric = false) => (
+    <th
+      className={numeric ? "num" : ""}
+      aria-sort={
+        filters.sortField === field
+          ? filters.direction === "asc"
+            ? "ascending"
+            : "descending"
+          : "none"
+      }
+    >
+      <button onClick={() => sort(field)}>
+        {label}
+        <span aria-hidden="true">
+          {filters.sortField === field
+            ? filters.direction === "asc"
+              ? "↑"
+              : "↓"
+            : "↕"}
+        </span>
+      </button>
+    </th>
+  );
   const act = async (p: Purchase, action: string, fields: any) => {
     setBusy(true);
     try {
@@ -1426,9 +1443,9 @@ export default function PurchasingApp() {
         action === "approve"
           ? "Approval saved with date and time."
           : action === "reject"
-            ? "Proposal rejected. Reason saved for the requester."
+            ? "Rejection reason saved."
             : action === "resubmit"
-              ? "Revised proposal submitted for fresh approvals."
+              ? "Revised proposal submitted for approval."
               : "Order details saved.",
       );
       return data;
@@ -1439,1041 +1456,668 @@ export default function PurchasingApp() {
   const submit = async (fields: any) => {
     setBusy(true);
     try {
-      let saved;
-      if (form?.revision && form.source)
-        saved = await act(form.source, "resubmit", { fields });
-      else
-        saved = await request("/api/requests", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(fields),
-        });
+      const saved =
+        form?.revision && form.source
+          ? await act(form.source, "resubmit", { fields })
+          : await request("/api/requests", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(fields),
+            });
       await refresh();
       setForm(null);
       setSelected(saved.id);
-      setToast("Purchase proposal submitted.");
+      setToast("Purchase request submitted.");
     } finally {
       setBusy(false);
     }
   };
-  const download = (
-    content: BlobPart,
-    name: string,
-    type = "text/csv;charset=utf-8",
-  ) => {
+  const download = (content: BlobPart, name: string, type: string) => {
     const url = URL.createObjectURL(new Blob([content], { type }));
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = name;
-    a.click();
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
   const exportData = () => {
-    const stamp = businessDate(new Date().toISOString());
-    if (exportType === "json")
-      download(
-        JSON.stringify(
-          {
-            exportedAt: new Date().toISOString(),
-            records: filtered,
-            audit: w?.audit.filter((a) =>
-              filtered.some((p) => p.id === a.requestId),
-            ),
-          },
-          null,
-          2,
-        ),
-        `fuji-purchases-${stamp}.json`,
-        "application/json",
+    if (!w) return;
+    try {
+      const sheets: ExcelSheet[] =
+        view === "policy"
+          ? [
+              {
+                name: "Purchasing policy",
+                rows: [
+                  ["Purchase amount or type", "Approval route"],
+                  ...POLICY_ROWS,
+                  [
+                    "Emergency production",
+                    "Verbal Plant Manager approval. Written approvals within 24 hours.",
+                  ],
+                  [
+                    "Emergency BA",
+                    "Verbal Vice President or Controller approval. Written approvals within 24 hours.",
+                  ],
+                  [
+                    "Resubmission",
+                    "Rejected requests may be revised. A fresh approval route is required.",
+                  ],
+                ],
+              },
+            ]
+          : view === "people"
+            ? [
+                {
+                  name: "People and access",
+                  rows: [
+                    ["Name", "Email", "Roles", "Departments"],
+                    ...w.members.map((m) => [
+                      m.name,
+                      m.email,
+                      m.roles.map((r) => ROLE_NAMES[r]).join(", "),
+                      m.departments.join(", "),
+                    ]),
+                  ],
+                  widths: [30, 40, 30, 60],
+                },
+              ]
+            : purchaseSheets(filtered, w, effectiveFilters);
+      download(createXlsx(sheets), `fuji-${view}-${today}.xlsx`, XLSX_MIME);
+      setToast(
+        tableView
+          ? `${filtered.length} requests exported to Excel.`
+          : "Excel file exported.",
       );
-    else if (exportType === "audit")
-      download(
-        toCSV([
-          [
-            "Request ID",
-            "Action",
-            "Actor",
-            "Date and time (UTC)",
-            "Revision",
-            "Note",
-          ],
-          ...(w?.audit ?? [])
-            .filter((a) => filtered.some((p) => p.id === a.requestId))
-            .map((a) => [
-              all.find((p) => p.id === a.requestId)?.number,
-              a.action,
-              a.actorName,
-              a.at,
-              a.revision,
-              a.note,
-            ]),
-        ]),
-        `fuji-audit-${stamp}.csv`,
-      );
-    else
-      download(
-        toCSV(exportRows(filtered, exportType === "items")),
-        `fuji-${exportType === "items" ? "purchase-line-items" : "purchase-summary"}-${stamp}.csv`,
-      );
-    setExportOpen(false);
-    setToast(`${filtered.length} requests exported.`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
   };
-  const table = (compact = false) => (
-    <>
-      <div className="table-wrap">
-        <table className="request-table">
-          <thead>
-            <tr>
-              <th>Request / item</th>
-              <th>Department</th>
-              {!compact && <th>Requested by</th>}
-              <th className="num">Amount</th>
-              <th>Needed by</th>
-              <th>Status</th>
-              <th className="arrow-col">
-                <span className="sr-only">Open</span>
-              </th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((p) => (
-              <tr key={p.id}>
-                <td>
-                  <button
-                    className="request-link"
-                    onClick={() => setSelected(p.id)}
-                  >
-                    <span>
-                      {p.number}
-                      {p.sample && <span className="table-sample">SAMPLE</span>}
-                      {p.priority === "Rush" && (
-                        <b className="rush-dot" title="Rush priority" />
-                      )}
-                    </span>
-                    <strong>{p.title}</strong>
-                    <small>{p.supplier}</small>
-                  </button>
-                </td>
-                <td>
-                  <span className="dept-label">{shortDept(p.department)}</span>
-                </td>
-                {!compact && (
-                  <td>
-                    <div className="person-cell">
-                      <span
-                        className={
-                          "avatar " +
-                          (p.requesterId === "demo-employee-2"
-                            ? "lavender"
-                            : "")
-                        }
-                      >
-                        {initials(p.requesterName)}
-                      </span>
-                      <span>{p.requesterName}</span>
-                    </div>
-                  </td>
-                )}
-                <td className="num amount-cell">{money(p.total)}</td>
-                <td>
-                  <span className="date-text">
-                    {fmt(p.neededBy).replace(", 2026", "")}
-                  </span>
-                  {p.priority === "Rush" && (
-                    <small className="rush-label">Rush</small>
-                  )}
-                </td>
-                <td>
-                  <Badge
-                    value={
-                      view === "history"
-                        ? p.order?.receivedAt
-                          ? "Received"
-                          : "Ordered"
-                        : p.status
-                    }
-                  />
-                </td>
-                <td>
-                  <button
-                    className="icon-btn"
-                    onClick={() => setSelected(p.id)}
-                    aria-label={`Open ${p.number}`}
-                  >
-                    <ChevronRight size={17} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {!visible.length && (
-        <div className="empty">
-          <Search size={28} />
-          <h3>No requests found</h3>
-          <p>
-            {view === "approvals"
-              ? "There are no proposals awaiting your approval. Try a manager demo role or check back later."
-              : "Try a different search or filter, or create a purchase request."}
-          </p>
-          <button
-            className="btn"
-            onClick={() => {
-              setSearch("");
-              setStatus("All statuses");
-              setDept("All departments");
-              setPriority("All priorities");
-              setFulfillment("All order stages");
-            }}
-          >
-            Clear filters
-          </button>
-        </div>
-      )}
-      <div className="pagination">
-        <span>
-          Showing {filtered.length ? (page - 1) * 10 + 1 : 0}–
-          {Math.min(page * 10, filtered.length)} of {filtered.length} requests
-        </span>
-        <div>
-          <button
-            className="icon-btn"
-            aria-label="Previous page"
-            disabled={page <= 1}
-            onClick={() => setPage(page - 1)}
-          >
-            <ChevronLeft size={16} />
-          </button>
-          <span>
-            Page {page} of {Math.max(1, Math.ceil(filtered.length / 10))}
-          </span>
-          <button
-            className="icon-btn"
-            aria-label="Next page"
-            disabled={page * 10 >= filtered.length}
-            onClick={() => setPage(page + 1)}
-          >
-            <ChevronRight size={16} />
-          </button>
-        </div>
-      </div>
-    </>
-  );
-  const filters = (
-    <div className="filters">
-      <div className="search-field">
-        <Search size={17} />
-        <input
-          aria-label="Search purchases"
-          placeholder="Search requests, items, suppliers, PO #…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        {search && (
-          <button
-            className="icon-btn"
-            aria-label="Clear search"
-            onClick={() => setSearch("")}
-          >
-            <X size={14} />
-          </button>
-        )}
-      </div>
-      <select
-        aria-label="Filter by status"
-        value={status}
-        onChange={(e) => setStatus(e.target.value)}
-      >
-        {["All statuses", "Pending", "Approved", "Rejected"].map((s) => (
-          <option key={s}>{s}</option>
-        ))}
-      </select>
-      <select
-        aria-label="Filter by department"
-        value={dept}
-        onChange={(e) => setDept(e.target.value)}
-      >
-        <option>All departments</option>
-        {DEPARTMENTS.map((d) => (
-          <option key={d}>{d}</option>
-        ))}
-      </select>
-      <select
-        aria-label="Filter by priority"
-        value={priority}
-        onChange={(e) => setPriority(e.target.value)}
-      >
-        <option>All priorities</option>
-        <option>Rush</option>
-        <option>Normal</option>
-      </select>
-      <select
-        aria-label="Filter by order stage"
-        value={fulfillment}
-        onChange={(e) => setFulfillment(e.target.value)}
-      >
-        {["All order stages", "Not ordered", "Ordered", "Received"].map((s) => (
-          <option key={s}>{s}</option>
-        ))}
-      </select>
-    </div>
-  );
+  const setPeriod = (period: string) => {
+    if (!period || period === "all") return patchFilters({ from: "", to: "" });
+    const anchor = new Date(`${today}T12:00:00Z`);
+    const start =
+      period === "month"
+        ? `${today.slice(0, 7)}-01`
+        : period === "year"
+          ? `${today.slice(0, 4)}-01-01`
+          : new Date(anchor.getTime() - (Number(period) - 1) * 86400000)
+              .toISOString()
+              .slice(0, 10);
+    patchFilters({ from: start, to: today });
+  };
   return (
-    <div className="app-shell">
+    <div className="app-shell register-shell">
       <a className="skip-link" href="#main">
         Skip to content
       </a>
-      <aside className={"sidebar " + (mobile ? "open" : "")}>
-        <a className="brand" href="/" aria-label="Fuji Purchasing Hub home">
-          <div className="brand-mark">
-            <Leaf size={25} />
-          </div>
-          <div>
-            <strong>
-              FUJI<span> SILYSIA</span>
-            </strong>
-            <small>PURCHASING HUB</small>
-          </div>
-        </a>
-        <div className="workspace-label">
-          <span className="workspace-icon">
-            <Building2 size={16} />
-          </span>
-          <div>
-            <strong>Fuji Chemical USA</strong>
-            <small>MIS 4173 · Team 2</small>
-          </div>
-          <ChevronDown size={13} />
-        </div>
-        <span className="nav-section">WORKSPACE</span>
-        <nav>
-          {views
-            .filter(([id]) => id !== "people" || w?.owner)
-            .map(([id, label, Icon], i) => (
-              <button
-                className={
-                  (view === id ? "active " : "") +
-                  (i === 5 ? "nav-divider" : "")
-                }
-                key={id}
-                onClick={() => navigate(id)}
-              >
-                <Icon size={18} />
-                <span>{label}</span>
-                {id === "approvals" && inbox.length > 0 && (
-                  <b>{inbox.length}</b>
-                )}
-              </button>
-            ))}
-        </nav>
-        <div className="sidebar-help">
-          <div className="help-icon">
-            <ShieldCheck size={20} />
-          </div>
-          <strong>Every approval, accounted for.</strong>
-          <p>A clear record from purchase proposal to delivery.</p>
-          <button onClick={() => navigate("policy")}>
-            View purchasing policy <ArrowUpRight size={14} />
-          </button>
-        </div>
-        <div className="sidebar-footer">
-          <span className="owner-avatar">T2</span>
-          <div>
-            <strong>Team 2 Workspace</strong>
-            <small>Systems Analysis & Design</small>
-          </div>
-          <span className="online-dot" />
-        </div>
-      </aside>
-      {mobile && (
-        <button
-          className="sidebar-scrim"
-          aria-label="Close navigation"
-          onClick={() => setMobile(false)}
-        />
-      )}
-      <div className="main-shell">
-        <header className="topbar">
-          <div className="breadcrumb">
-            <button
-              className="icon-btn mobile-menu"
-              aria-label="Open navigation"
-              onClick={() => setMobile(!mobile)}
-            >
-              <Menu size={20} />
-            </button>
-            <span>Workspace</span>
-            <ChevronRight size={13} />
-            <strong>{views.find((v) => v[0] === view)?.[1]}</strong>
-          </div>
-          <div className="topbar-right">
-            <span className="secure-indicator">
-              <span />
-              Signed-in workspace
+      <header className="register-header">
+        <div className="register-titlebar">
+          <a
+            className="register-brand"
+            href="/"
+            aria-label="Fuji Purchasing Register home"
+          >
+            <span className="register-logo">
+              <Leaf size={23} />
             </span>
-            <div className="topbar-divider" />
+            <span>
+              <strong>FUJI</strong>
+              <small>Purchasing register</small>
+            </span>
+          </a>
+          <div className="register-account">
             <span className="user-avatar">
-              {initials(w?.me.name ?? "Alex Parker")}
+              {initials(w?.me.name ?? "Fuji")}
             </span>
-            <div className="persona-control">
-              <span>VIEWING AS {w?.demoMode ? "· DEMO" : ""}</span>
+            <label className="persona-control">
+              <span>Workspace role</span>
               <select
-                aria-label="Switch demo role"
+                aria-label="Workspace role"
                 value={actor}
+                disabled={!w?.owner}
                 onChange={(e) => {
                   setActor(e.target.value);
                   setForm(null);
                   setOrderId(null);
                 }}
               >
-                {w?.owner ? (
-                  <>
-                    <option value="">Workspace owner</option>
-                    {w.actors.map((m) => (
-                      <option value={m.id} key={m.id}>
-                        {m.name} · {ROLE_NAMES[m.roles[0]]}
-                      </option>
-                    ))}
-                  </>
-                ) : (
-                  <option value={actor}>{w?.me.name ?? "Loading…"}</option>
-                )}
+                <option value="">
+                  {w?.owner ? "Workspace owner" : (w?.me.name ?? "Loading…")}
+                </option>
+                {w?.owner &&
+                  w.actors.map((m) => (
+                    <option value={m.id} key={m.id}>
+                      {m.name} · {ROLE_NAMES[m.roles[0]]}
+                    </option>
+                  ))}
               </select>
-            </div>
+            </label>
           </div>
-        </header>
-        <main id="main" className="content">
-          <div className="sample-banner">
-            <div>
-              <span className="sample-dot" />
-              <strong>Sample data included</strong>
-              <span className="banner-divider" />
-              <span>
-                64 fictional records to explore the purchasing workflow.
-              </span>
-            </div>
-            {w?.owner ? (
+        </div>
+        <nav className="register-tabs" aria-label="Workspace sections">
+          {views
+            .filter(([id]) => id !== "people" || w?.owner)
+            .map(([id, label, Icon]) => (
               <button
-                className="text-btn"
-                onClick={() => setActor(actor ? "" : "demo-employee")}
+                key={id}
+                className={view === id ? "active" : ""}
+                aria-current={view === id ? "page" : undefined}
+                onClick={() => navigate(id)}
               >
-                {actor ? "Return to owner" : "Try employee view"}{" "}
-                <ArrowRight size={13} />
+                <Icon size={17} />
+                {label}
+                {id === "approvals" && inboxCount > 0 && (
+                  <span>{inboxCount}</span>
+                )}
               </button>
+            ))}
+        </nav>
+      </header>
+      <main id="main" className="register-content">
+        {loading ? (
+          <div className="loading-state">
+            <div className="spinner" />
+            <h2>Opening your workspace…</h2>
+          </div>
+        ) : !w ? (
+          <div className="empty">
+            <AlertCircle size={30} />
+            <h2>Workspace unavailable</h2>
+            <p>{error}</p>
+            {error.includes("Sign in") ? (
+              <a
+                className="btn primary"
+                href="/signin-with-chatgpt?return_to=/"
+                target="_top"
+              >
+                Sign in with ChatGPT
+              </a>
             ) : (
-              <span className="banner-label">MIS 4173 · TEAM 2</span>
+              <button
+                className="btn"
+                onClick={() => {
+                  setLoading(true);
+                  refresh()
+                    .catch((e) => setError(e.message))
+                    .finally(() => setLoading(false));
+                }}
+              >
+                Try again
+              </button>
             )}
           </div>
-          {loading ? (
-            <div className="loading-state">
-              <div className="spinner" />
-              <h2>Opening your workspace…</h2>
-            </div>
-          ) : error && !w ? (
-            <div className="empty">
-              <AlertCircle size={32} />
-              <h2>Workspace unavailable</h2>
-              <p>{error}</p>
-              {error.includes("Sign in") ? (
-                <a
-                  className="btn primary"
-                  href="/signin-with-chatgpt?return_to=/"
-                  target="_top"
-                >
-                  Sign in with ChatGPT
-                </a>
-              ) : (
+        ) : (
+          <>
+            <div className="register-heading">
+              <div>
+                <h1>{views.find((v) => v[0] === view)?.[1]}</h1>
+                <p>
+                  {view === "requests"
+                    ? "Purchase proposals and order progress"
+                    : view === "approvals"
+                      ? "Requests awaiting your approval"
+                      : view === "history"
+                        ? "Find parts, suppliers, and previous orders"
+                        : view === "policy"
+                          ? "Purchase approval requirements"
+                          : "Workspace roles and departments"}
+                </p>
+              </div>
+              <div className="heading-actions">
                 <button
-                  className="btn"
-                  onClick={() => {
-                    setLoading(true);
-                    refresh()
-                      .catch((e) => setError(e.message))
-                      .finally(() => setLoading(false));
-                  }}
+                  className="btn export-btn"
+                  onClick={exportData}
+                  disabled={invalidRange && tableView}
                 >
-                  Try again
+                  <ArrowDownToLine size={17} />
+                  Export data <span className="file-type">.xlsx</span>
                 </button>
-              )}
+                {tableView && (
+                  <button
+                    className="btn primary"
+                    onClick={() => setForm({ revision: false })}
+                  >
+                    <Plus size={18} />
+                    New request
+                  </button>
+                )}
+              </div>
             </div>
-          ) : (
-            w && (
+            {error && (
+              <div className="alert error" role="alert">
+                {error}
+                <button
+                  className="icon-btn"
+                  aria-label="Dismiss error"
+                  onClick={() => setError("")}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+            {tableView && (
               <>
-                <div className="page-heading">
-                  <div>
-                    <div className="overline">
-                      {view === "overview"
-                        ? "YOUR PURCHASING WORKSPACE"
-                        : view === "history"
-                          ? "A SEARCHABLE RECORD OF EVERY ORDER"
-                          : view === "approvals"
-                            ? "KEEP PURCHASES MOVING"
-                            : view === "reports"
-                              ? "TURN PURCHASES INTO INSIGHT"
-                              : "FUJI SILYSIA CHEMICAL USA"}
-                    </div>
-                    <h1>
-                      {view === "overview"
-                        ? "Purchasing overview"
-                        : views.find((v) => v[0] === view)?.[1]}
-                    </h1>
-                    <p>
-                      {view === "overview"
-                        ? "A clearer view of requests, approvals, and every purchase in between."
-                        : view === "requests"
-                          ? "Create, review, and track purchase proposals from one place."
-                          : view === "approvals"
-                            ? "Review proposals that need your sign-off. Every decision is dated."
-                            : view === "history"
-                              ? "Find what you purchased, who supplied it, and when it was ordered."
-                              : view === "reports"
-                                ? "Export complete records for Excel, Google Sheets, and pivot tables."
-                                : view === "policy"
-                                  ? "Approval rules based on the supplied purchasing procedures."
-                                  : "Assign operational roles to people who can access this private workspace."}
-                    </p>
-                  </div>
-                  <div className="heading-actions">
-                    {!["policy", "people"].includes(view) && (
-                      <button
-                        className="btn"
-                        onClick={() => setExportOpen(true)}
-                      >
-                        <ArrowDownToLine size={16} />
-                        Export data
-                      </button>
-                    )}
-                    {!["policy", "people", "reports"].includes(view) && (
-                      <button
-                        className="btn primary"
-                        onClick={() => setForm({ revision: false })}
-                      >
-                        <Plus size={17} />
-                        New request
-                      </button>
-                    )}
-                  </div>
+                <div className="register-summary" aria-label="Workspace totals">
+                  <span>
+                    <strong>{w.requests.length}</strong> requests
+                  </span>
+                  <span>
+                    <strong>
+                      {w.requests.filter((p) => p.status === "Pending").length}
+                    </strong>{" "}
+                    pending
+                  </span>
+                  <button
+                    className={filters.overdueOnly ? "active" : ""}
+                    onClick={() =>
+                      patchFilters({ overdueOnly: !filters.overdueOnly })
+                    }
+                  >
+                    <span className="overdue-key" />
+                    <strong>{overdueCount}</strong> overdue
+                  </button>
+                  <span className="summary-value">
+                    Filtered value{" "}
+                    <strong>
+                      {money(filtered.reduce((sum, p) => sum + p.total, 0))}
+                    </strong>
+                  </span>
                 </div>
-                {view === "overview" && (
-                  <>
-                    <div className="stats-grid">
-                      {[
-                        {
-                          title: "Pending approval",
-                          value: String(pending.length),
-                          note: `${pending.filter((p) => p.priority === "Rush").length} marked as rush`,
-                          Icon: Clock,
-                          color: "amber",
-                          click: () => {
-                            navigate("requests");
-                            setStatus("Pending");
-                          },
-                        },
-                        {
-                          title: "Ready to order",
-                          value: String(ready.length),
-                          note: "Approved · awaiting a PO",
-                          Icon: ShieldCheck,
-                          color: "green",
-                          click: () => {
-                            navigate("requests");
-                            setStatus("Approved");
-                            setFulfillment("Not ordered");
-                          },
-                        },
-                        {
-                          title: "Purchases ordered",
-                          value: String(ordered.length),
-                          note: `${ordered.filter((p) => !p.order?.receivedAt).length} awaiting delivery`,
-                          Icon: Package,
-                          color: "blue",
-                          click: () => navigate("history"),
-                        },
-                        {
-                          title: "Total ordered value",
-                          value: money(totalSpend),
-                          note: "Across your visible purchase history",
-                          Icon: BarChart3,
-                          color: "green",
-                          click: () => navigate("reports"),
-                        },
-                      ].map(({ title, value, note, Icon, color, click }) => (
+                <section
+                  className="register-sheet"
+                  aria-label="Purchase register"
+                >
+                  <div className="register-filters">
+                    <div className="register-search">
+                      <Search size={18} />
+                      <input
+                        aria-label="Search purchases"
+                        placeholder="Search item, supplier, part, or PO number"
+                        value={filters.search}
+                        onChange={(e) =>
+                          patchFilters({ search: e.target.value })
+                        }
+                      />
+                      {filters.search && (
                         <button
-                          className="stat-card"
-                          onClick={click}
-                          key={title}
+                          className="icon-btn"
+                          aria-label="Clear search"
+                          onClick={() => patchFilters({ search: "" })}
                         >
-                          <div className="row spread">
-                            <span>{title}</span>
-                            <span className={"stat-icon " + color}>
-                              <Icon size={17} />
-                            </span>
-                          </div>
-                          <strong
-                            className={
-                              title === "Total ordered value"
-                                ? "small-value"
-                                : ""
-                            }
-                          >
-                            {value}
-                          </strong>
-                          <div className="stat-bottom">
-                            <small>{note}</small>
-                            <ArrowUpRight size={15} />
-                          </div>
+                          <X size={15} />
                         </button>
-                      ))}
-                    </div>
-                    <div className="overview-insight">
-                      <div className="insight-icon">
-                        <ShieldCheck size={21} />
-                      </div>
-                      <p>
-                        <strong>
-                          {pending.length} proposals are moving through
-                          approvals.
-                        </strong>
-                        <span>
-                          Review a request to see its next approver and complete
-                          decision history.
-                        </span>
-                      </p>
-                      <button
-                        className="text-btn"
-                        onClick={() => navigate("approvals")}
-                      >
-                        View approval inbox <ArrowRight size={16} />
-                      </button>
-                    </div>
-                  </>
-                )}
-                {["overview", "requests", "approvals", "history"].includes(
-                  view,
-                ) && (
-                  <div className={view === "overview" ? "overview-grid" : ""}>
-                    <section className="panel requests-panel">
-                      <div className="panel-header">
-                        <div>
-                          <h2>
-                            {view === "overview"
-                              ? "Recent purchase requests"
-                              : view === "approvals"
-                                ? "Your approval inbox"
-                                : view === "history"
-                                  ? "Order history"
-                                  : "All purchase requests"}{" "}
-                            <span className="count-pill">
-                              {filtered.length}
-                            </span>
-                          </h2>
-                          {view === "overview" && (
-                            <p>
-                              The latest activity across your purchasing
-                              workspace.
-                            </p>
-                          )}
-                        </div>
-                        {view === "overview" && (
-                          <button
-                            className="text-btn"
-                            onClick={() => navigate("requests")}
-                          >
-                            View all <ArrowRight size={15} />
-                          </button>
-                        )}
-                      </div>
-                      {view === "overview" ? (
-                        <div className="table-tabs">
-                          <button
-                            className={
-                              status === "All statuses" ? "active" : ""
-                            }
-                            onClick={() => setStatus("All statuses")}
-                          >
-                            All requests
-                          </button>
-                          {["Pending", "Approved", "Rejected"].map((s) => (
-                            <button
-                              key={s}
-                              className={status === s ? "active" : ""}
-                              onClick={() => setStatus(s)}
-                            >
-                              {s}
-                              <span>
-                                {all.filter((p) => p.status === s).length}
-                              </span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : (
-                        filters
                       )}
-                      {table(view === "overview")}
-                    </section>
-                    {view === "overview" && (
-                      <aside className="right-column">
-                        <section className="panel spend-panel">
-                          <div className="panel-header">
-                            <h2>Spend by department</h2>
-                            <BarChart3 size={17} />
-                          </div>
-                          <div className="spend-total">
-                            <strong>{money(totalSpend)}</strong>
-                            <small>Total ordered value</small>
-                          </div>
-                          <div className="spend-bars">
-                            {deptSpend.slice(0, 5).map(([name, value], i) => (
-                              <div key={name}>
-                                <div>
-                                  <span>{name}</span>
-                                  <strong>{money(value)}</strong>
-                                </div>
-                                <div className="bar-track">
-                                  <span
-                                    style={{
-                                      width: `${(value / (deptSpend[0]?.[1] || 1)) * 100}%`,
-                                      opacity: 1 - i * 0.12,
-                                    }}
-                                  />
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                          <button
-                            className="text-btn"
-                            onClick={() => navigate("reports")}
-                          >
-                            Explore reports <ArrowRight size={14} />
-                          </button>
-                        </section>
-                        <section className="workflow-card">
-                          <div className="row spread">
-                            <span className="workflow-symbol">
-                              <ClipboardList size={20} />
-                            </span>
-                            <span className="overline">BUILT FOR FUJI</span>
-                          </div>
-                          <h2>
-                            From proposal
-                            <br />
-                            to purchase.
-                          </h2>
-                          <p>
-                            The right information.
-                            <br />
-                            The right approvals. All in one place.
-                          </p>
-                          <div className="mini-flow">
-                            <span>
-                              <Check size={12} /> Submit
-                            </span>
-                            <i />
-                            <span>
-                              <Check size={12} /> Approve
-                            </span>
-                            <i />
-                            <span>
-                              <Truck size={12} /> Order
-                            </span>
-                          </div>
-                          <button onClick={() => navigate("policy")}>
-                            How approvals work <ArrowUpRight size={15} />
-                          </button>
-                        </section>
-                        <div className="data-note">
-                          <Leaf size={16} />
-                          <p>
-                            Designed around Fuji’s purchase proposal form and
-                            Chase’s feedback.
-                          </p>
-                        </div>
-                      </aside>
-                    )}
+                    </div>
+                    <label>
+                      <span>Status</span>
+                      <select
+                        value={filters.status}
+                        onChange={(e) =>
+                          patchFilters({ status: e.target.value })
+                        }
+                      >
+                        <option value="">All statuses</option>
+                        {["Pending", "Approved", "Rejected"].map((s) => (
+                          <option key={s}>{s}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Department</span>
+                      <select
+                        value={filters.department}
+                        onChange={(e) =>
+                          patchFilters({ department: e.target.value })
+                        }
+                      >
+                        <option value="">All departments</option>
+                        {DEPARTMENTS.map((d) => (
+                          <option key={d}>{d}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Priority</span>
+                      <select
+                        value={filters.priority}
+                        onChange={(e) =>
+                          patchFilters({ priority: e.target.value })
+                        }
+                      >
+                        <option value="">All priorities</option>
+                        {PRIORITIES.map((p) => (
+                          <option key={p}>{p}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      <span>Order stage</span>
+                      <select
+                        value={filters.fulfillment}
+                        onChange={(e) =>
+                          patchFilters({ fulfillment: e.target.value })
+                        }
+                      >
+                        <option value="">All stages</option>
+                        {["Not ordered", "Ordered", "Received"].map((s) => (
+                          <option key={s}>{s}</option>
+                        ))}
+                      </select>
+                    </label>
                   </div>
-                )}
-                {view === "reports" && (
-                  <>
-                    <div className="report-hero">
-                      <div>
-                        <span className="overline">
-                          PURCHASE HISTORY, READY TO ANALYZE
-                        </span>
-                        <h2>
-                          Find the part.
-                          <br />
-                          See the bigger picture.
-                        </h2>
-                        <p>
-                          One row per request for a quick overview, or one row
-                          per item for deeper analysis. Both open directly in
-                          Excel and Google Sheets.
-                        </p>
-                        <button
-                          className="btn primary"
-                          onClick={() => {
-                            setExportType("items");
-                            setExportOpen(true);
-                          }}
-                        >
-                          <ArrowDownToLine size={16} />
-                          Export purchase line items
-                        </button>
-                      </div>
-                      <div className="report-illustration">
-                        <div className="sheet-title">
-                          <span />
-                          <span />
-                          <span />
-                          <strong>FUJI PURCHASE DATA</strong>
-                        </div>
-                        <div className="sheet-row head">
-                          <span>DEPARTMENT</span>
-                          <span>SUPPLIER</span>
-                          <span>AMOUNT</span>
-                        </div>
-                        {ordered.slice(0, 5).map((p) => (
-                          <div className="sheet-row" key={p.id}>
-                            <span>{shortDept(p.department)}</span>
-                            <span>{p.supplier}</span>
-                            <strong>{money(p.total)}</strong>
-                          </div>
+                  <div className="register-date-filters">
+                    <label>
+                      <span>Date field</span>
+                      <select
+                        value={filters.dateField}
+                        onChange={(e) =>
+                          patchFilters({
+                            dateField: e.target.value as DateField,
+                          })
+                        }
+                      >
+                        {Object.entries(DATE_FIELDS).map(([id, name]) => (
+                          <option key={id} value={id}>
+                            {name}
+                          </option>
                         ))}
-                        <div className="sheet-tag">
-                          <CheckCircle2 size={15} />
-                          Pivot-table friendly
-                        </div>
-                      </div>
-                    </div>
-                    <div className="report-summary">
-                      <section className="panel">
-                        <div className="panel-header">
-                          <h2>Ordered spend by supplier</h2>
-                          <span className="hint">Visible records</span>
-                        </div>
-                        <table>
-                          <thead>
-                            <tr>
-                              <th>Supplier</th>
-                              <th className="num">Orders</th>
-                              <th className="num">Ordered value</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {Object.entries(
-                              ordered.reduce(
-                                (o, p) => ({
-                                  ...o,
-                                  [p.supplier]: [...(o[p.supplier] || []), p],
-                                }),
-                                {} as Record<string, Purchase[]>,
-                              ),
-                            )
-                              .sort(
-                                (a, b) =>
-                                  b[1].reduce((s, p) => s + p.total, 0) -
-                                  a[1].reduce((s, p) => s + p.total, 0),
-                              )
-                              .map(([s, rows]) => (
-                                <tr key={s}>
-                                  <td>{s}</td>
-                                  <td className="num">{rows.length}</td>
-                                  <td className="num">
-                                    <strong>
-                                      {money(
-                                        rows.reduce(
-                                          (sum, p) => sum + p.total,
-                                          0,
-                                        ),
-                                      )}
-                                    </strong>
-                                  </td>
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
-                      </section>
-                      <section className="panel export-panel">
-                        <FileText size={27} />
-                        <h2>Four useful export formats</h2>
-                        <p>
-                          Use the purchase request filters to narrow your
-                          export.
-                        </p>
-                        {[
-                          [
-                            "summary",
-                            "Request summary",
-                            "One row per proposal, including approval and order dates.",
-                          ],
-                          [
-                            "items",
-                            "Purchase line items",
-                            "Part numbers, quantities, and unit prices for pivot tables.",
-                          ],
-                          [
-                            "audit",
-                            "Approval activity",
-                            "Timestamped decisions, actors, notes, and revisions.",
-                          ],
-                          [
-                            "json",
-                            "Complete JSON backup",
-                            "Full request records, quotes, attachments metadata, and audit events.",
-                          ],
-                        ].map(([id, title, desc]) => (
-                          <button
-                            key={id}
-                            onClick={() => {
-                              setExportType(id);
-                              setExportOpen(true);
-                            }}
+                      </select>
+                    </label>
+                    <label>
+                      <span>From</span>
+                      <input
+                        type="date"
+                        value={filters.from}
+                        aria-invalid={invalidRange}
+                        onChange={(e) => patchFilters({ from: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      <span>Through</span>
+                      <input
+                        type="date"
+                        value={filters.to}
+                        aria-invalid={invalidRange}
+                        onChange={(e) => patchFilters({ to: e.target.value })}
+                      />
+                    </label>
+                    <label>
+                      <span>Date range</span>
+                      <select
+                        aria-label="Choose date range"
+                        value=""
+                        onChange={(e) => setPeriod(e.target.value)}
+                      >
+                        <option value="" disabled>
+                          Choose range…
+                        </option>
+                        <option value="7">Last 7 days</option>
+                        <option value="30">Last 30 days</option>
+                        <option value="month">This month</option>
+                        <option value="year">This year</option>
+                        <option value="all">All dates</option>
+                      </select>
+                    </label>
+                    <label>
+                      <span>Sort by</span>
+                      <select
+                        value={filters.sortField}
+                        onChange={(e) =>
+                          patchFilters({
+                            sortField: e.target.value as SortField,
+                          })
+                        }
+                      >
+                        {Object.entries(DATE_FIELDS).map(([id, name]) => (
+                          <option key={id} value={id}>
+                            {name}
+                          </option>
+                        ))}
+                        <option value="number">Request number</option>
+                        <option value="total">Amount</option>
+                        <option value="priority">Priority</option>
+                        <option value="supplier">Supplier</option>
+                      </select>
+                    </label>
+                    <button
+                      className="btn direction-btn"
+                      aria-label={
+                        filters.direction === "asc"
+                          ? "Sort descending"
+                          : "Sort ascending"
+                      }
+                      onClick={() =>
+                        patchFilters({
+                          direction:
+                            filters.direction === "asc" ? "desc" : "asc",
+                        })
+                      }
+                    >
+                      {filters.direction === "asc"
+                        ? "↑ Ascending"
+                        : "↓ Descending"}
+                    </button>
+                    <button
+                      className="text-btn clear-register"
+                      onClick={() => setFilters({ ...DEFAULT_FILTERS, view })}
+                    >
+                      Clear filters
+                    </button>
+                  </div>
+                  {invalidRange && (
+                    <p className="range-error" role="alert">
+                      The From date must be on or before the Through date.
+                    </p>
+                  )}
+                  <div
+                    className="register-grid-wrap"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Purchase requests. Scroll horizontally for more columns."
+                  >
+                    <table className="register-table">
+                      <caption className="sr-only">
+                        {views.find((v) => v[0] === view)?.[1]}. Select a column
+                        heading to sort. Overdue requests are marked in red.
+                      </caption>
+                      <thead>
+                        <tr>
+                          <th className="row-index" scope="col">
+                            #
+                          </th>
+                          {sortHeading("Request", "number")}
+                          {sortHeading("Item / supplier", "title")}
+                          {sortHeading("Department", "department")}
+                          {sortHeading("Requested by", "requesterName")}
+                          {sortHeading("Amount", "total", true)}
+                          {sortHeading("Priority", "priority")}
+                          {sortHeading("Submitted", "submittedAt")}
+                          {sortHeading("Needed by", "neededBy")}
+                          {sortHeading("Status", "status")}
+                          <th scope="col">Order / PO</th>
+                          <th className="open-col">
+                            <span className="sr-only">Open request</span>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {visible.map((p, i) => (
+                          <tr
+                            key={p.id}
+                            className={isOverdue(p, today) ? "overdue-row" : ""}
                           >
-                            <div>
-                              <strong>{title}</strong>
-                              <small>{desc}</small>
-                            </div>
-                            <ArrowDownToLine size={17} />
-                          </button>
-                        ))}
-                      </section>
-                    </div>
-                  </>
-                )}
-                {view === "policy" && (
-                  <div className="policy-grid">
-                    <section className="panel policy-panel">
-                      <div className="policy-title">
-                        <ShieldCheck size={25} />
-                        <div>
-                          <h2>Purchase approval requirements</h2>
-                          <p>Purchasing Procedures · March 22, 2012</p>
-                        </div>
-                      </div>
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Purchase amount / type</th>
-                            <th>Required approval route</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          <tr>
-                            <td>
-                              <strong>Up to $150</strong>
+                            <td className="row-index">
+                              {(currentPage - 1) * pageSize + i + 1}
+                            </td>
+                            <td className="request-id-cell">
+                              <button onClick={() => setSelected(p.id)}>
+                                {p.number}
+                              </button>
+                              {isOverdue(p, today) && (
+                                <span className="overdue-label">Overdue</span>
+                              )}
+                            </td>
+                            <td className="request-item-cell">
+                              <button onClick={() => setSelected(p.id)}>
+                                {p.title}
+                              </button>
+                              <small>{p.supplier}</small>
+                            </td>
+                            <td>{shortDept(p.department)}</td>
+                            <td>{p.requesterName}</td>
+                            <td className="num amount-cell">
+                              {money(p.total)}
                             </td>
                             <td>
-                              Immediate Supervisor
-                              <br />
+                              <Badge value={p.priority} />
+                            </td>
+                            <td className="date-cell">{fmt(p.submittedAt)}</td>
+                            <td className="date-cell">{fmt(p.neededBy)}</td>
+                            <td>
+                              <Badge value={p.status} />
+                            </td>
+                            <td className="order-cell">
+                              <span>{p.order?.poNumber || "—"}</span>
                               <small>
-                                Treasurer or Controller if the supervisor is
-                                absent
+                                {p.order
+                                  ? p.order.receivedAt
+                                    ? `Received ${fmt(p.order.receivedAt)}`
+                                    : `Ordered ${fmt(p.order.orderedAt)}`
+                                  : "Not ordered"}
                               </small>
                             </td>
-                          </tr>
-                          <tr>
                             <td>
-                              <strong>Above $150 through $1,000</strong>
-                            </td>
-                            <td>
-                              Immediate Supervisor → Controller or Vice
-                              President
-                            </td>
-                          </tr>
-                          <tr>
-                            <td>
-                              <strong>Above $1,000</strong>
-                            </td>
-                            <td>
-                              Immediate Supervisor → Controller → Vice President
+                              <button
+                                className="icon-btn"
+                                aria-label={`Open ${p.number}`}
+                                onClick={() => setSelected(p.id)}
+                              >
+                                <ChevronRight size={19} />
+                              </button>
                             </td>
                           </tr>
-                          <tr>
-                            <td>
-                              <strong>Raw materials</strong>
-                              <small>Any amount</small>
-                            </td>
-                            <td>Plant Manager or Controller</td>
-                          </tr>
-                        </tbody>
-                      </table>
-                      <div className="policy-notes">
-                        <h3>Ordering & emergencies</h3>
+                        ))}
+                      </tbody>
+                    </table>
+                    {!visible.length && (
+                      <div className="empty">
+                        <Search size={27} />
+                        <h3>
+                          {view === "approvals"
+                            ? "No requests awaiting your approval"
+                            : "No requests match these filters"}
+                        </h3>
                         <p>
-                          Purchasing receives the approved proposal before
-                          placing an order. Accounting enters the PO number,
-                          order date, account number, and delivery details.
-                        </p>
-                        <p>
-                          Emergency production purchases require verbal approval
-                          from the Plant Manager. Emergency BA purchases require
-                          verbal approval from the Vice President or Controller.
-                          Written proposals and required signatures are due
-                          within one day.
-                        </p>
-                        <h3>Implementation decisions</h3>
-                        <p>
-                          The source overlaps at exactly $150. This app assigns
-                          $150 to the basic tier and starts the next tier above
-                          $150. For $150–$1,000, it requires the supervisor plus
-                          either Controller or VP. Approvals proceed in the
-                          displayed order. These interpretations are documented
-                          for Fuji’s review.
-                        </p>
-                        <p>
-                          Pending, Approved, and Rejected describe the proposal.
-                          Ordered and Received are separate fulfillment labels.
-                          Rejected proposals may be revised and resubmitted;
-                          prior decisions remain in the audit history.
+                          {invalidRange
+                            ? "Correct the date range to view requests."
+                            : "Change the filters or clear them to see more requests."}
                         </p>
                       </div>
-                    </section>
-                    <aside>
-                      <section className="panel policy-aside">
-                        <Clock size={24} />
-                        <h2>Dates are part of the record.</h2>
-                        <p>
-                          Submission, every approval, final approval, order,
-                          delivery, and invoice dates remain visible and
-                          exportable.
-                        </p>
-                      </section>
-                      <section className="panel policy-aside">
-                        <FileText size={24} />
-                        <h2>A note on sample data</h2>
-                        <p>
-                          All seeded records are marked fictional. One item and
-                          amount are inspired by the supplied shrink-wrap form.
-                          Supplier names, people, and workflow events in the
-                          dataset are simulated.
-                        </p>
-                      </section>
-                    </aside>
+                    )}
                   </div>
-                )}
-                {view === "people" && (
-                  <People
-                    w={w}
-                    request={request}
-                    refresh={refresh}
-                    setToast={setToast}
-                  />
-                )}
-                <footer className="page-footer">
-                  <span>
-                    <Leaf size={13} /> Fuji Silysia Chemical USA · Purchasing
-                    Hub
-                  </span>
-                  <span>
-                    MIS 4173 · Team 2 <span> / </span> Academic demonstration
-                  </span>
-                </footer>
+                  <div className="register-pagination">
+                    <span>
+                      {filtered.length ? (currentPage - 1) * pageSize + 1 : 0}–
+                      {Math.min(currentPage * pageSize, filtered.length)} of{" "}
+                      {filtered.length} requests
+                    </span>
+                    <label>
+                      Rows{" "}
+                      <select
+                        aria-label="Rows per page"
+                        value={pageSize}
+                        onChange={(e) => setPageSize(Number(e.target.value))}
+                      >
+                        {[25, 50, 100].map((n) => (
+                          <option key={n}>{n}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <div className="row">
+                      <button
+                        className="icon-btn"
+                        aria-label="Previous page"
+                        disabled={currentPage <= 1}
+                        onClick={() => setPage(currentPage - 1)}
+                      >
+                        <ChevronLeft size={18} />
+                      </button>
+                      <span>
+                        {currentPage} / {pages}
+                      </span>
+                      <button
+                        className="icon-btn"
+                        aria-label="Next page"
+                        disabled={currentPage >= pages}
+                        onClick={() => setPage(currentPage + 1)}
+                      >
+                        <ChevronRight size={18} />
+                      </button>
+                    </div>
+                  </div>
+                </section>
               </>
-            )
-          )}
-        </main>
-      </div>
+            )}
+            {view === "policy" && (
+              <section className="panel register-policy">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Purchase amount / type</th>
+                      <th>Required approval route</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {POLICY_ROWS.map(([amount, route]) => (
+                      <tr key={amount}>
+                        <td>
+                          <strong>{amount}</strong>
+                        </td>
+                        <td>{route}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="policy-notes">
+                  <h3>Orders and emergencies</h3>
+                  <p>
+                    Purchasing receives the approved proposal before placing an
+                    order. Accounting records the purchase order number, order
+                    date, account number, and delivery details.
+                  </p>
+                  <p>
+                    Emergency production purchases require verbal Plant Manager
+                    approval. Emergency BA purchases require verbal Vice
+                    President or Controller approval. Written proposals and
+                    required signatures are due within 24 hours.
+                  </p>
+                  <h3>Dates and revisions</h3>
+                  <p>
+                    Each decision retains its date and time. Rejected requests
+                    can be revised and submitted for fresh approvals. Order and
+                    receipt dates are tracked separately.
+                  </p>
+                </div>
+              </section>
+            )}
+            {view === "people" && (
+              <People
+                w={w}
+                request={request}
+                refresh={refresh}
+                setToast={setToast}
+              />
+            )}
+            <footer className="register-footer">
+              <span>Fuji Silysia Chemical USA</span>
+              <span>Purchasing register</span>
+            </footer>
+          </>
+        )}
+      </main>
       {toast && (
         <div className="toast" role="status">
           <CheckCircle2 size={18} />
@@ -2509,7 +2153,7 @@ export default function PurchasingApp() {
           onClose={() => {
             if (!busy) setSelected(null);
           }}
-          onAction={(a, note) => act(active, a, { note })}
+          onAction={(action, note) => act(active, action, { note })}
           onRevise={() => setForm({ source: active, revision: true })}
           onReorder={() => setForm({ source: active, revision: false })}
           onOrder={() => setOrderId(active.id)}
@@ -2528,12 +2172,17 @@ export default function PurchasingApp() {
               setBusy(false);
             }
           }}
-          onDownload={async (a) => {
-            const r = await fetch(`/api/attachments/${a.id}`, {
+          onDownload={async (attachment) => {
+            const response = await fetch(`/api/attachments/${attachment.id}`, {
               headers: actor ? { "x-demo-member": actor } : {},
             });
-            if (!r.ok) throw new Error("The file could not be downloaded.");
-            download(await r.blob(), a.name, "application/octet-stream");
+            if (!response.ok)
+              throw new Error("The file could not be downloaded.");
+            download(
+              await response.blob(),
+              attachment.name,
+              "application/octet-stream",
+            );
           }}
         />
       )}
@@ -2544,95 +2193,29 @@ export default function PurchasingApp() {
           onClose={() => {
             if (!busy) setOrderId(null);
           }}
-          onSave={async (o) => {
-            await act(order, "order", { order: o });
+          onSave={async (value) => {
+            await act(order, "order", { order: value });
             setOrderId(null);
           }}
         />
       )}
-      {exportOpen && (
-        <Modal
-          title="Export purchase data"
-          onClose={() => setExportOpen(false)}
-        >
-          <div className="modal-body">
-            <div className="export-intro">
-              <span className="stat-icon green">
-                <ArrowDownToLine size={23} />
-              </span>
-              <div>
-                <h3>{filtered.length} requests ready to export</h3>
-                <p>
-                  Your current search, filters, and access permissions are
-                  applied.
-                </p>
-              </div>
-            </div>
-            <div className="export-options">
-              {[
-                [
-                  "summary",
-                  "Request summary CSV",
-                  "One row per request. Ideal for a purchase register.",
-                ],
-                [
-                  "items",
-                  "Purchase line items CSV",
-                  "One row per item. Ready for Excel pivot tables.",
-                ],
-                [
-                  "audit",
-                  "Approval activity CSV",
-                  "Decision history with actors and precise timestamps.",
-                ],
-                [
-                  "json",
-                  "Complete JSON backup",
-                  "Full records and audit history for future reuse.",
-                ],
-              ].map(([id, t, d]) => (
-                <label className={exportType === id ? "selected" : ""} key={id}>
-                  <input
-                    type="radio"
-                    name="exportType"
-                    value={id}
-                    checked={exportType === id}
-                    onChange={() => setExportType(id)}
-                  />
-                  <span>
-                    <strong>{t}</strong>
-                    <small>{d}</small>
-                  </span>
-                </label>
-              ))}
-            </div>
-            <div className="alert info">
-              <FileText size={17} />
-              <p>
-                CSV files open in Excel or import into Google Sheets. Dates use
-                ISO format; amounts remain numeric. Sample records are labeled
-                in every export.
-              </p>
-            </div>
-          </div>
-          <div className="modal-footer">
-            <button className="btn" onClick={() => setExportOpen(false)}>
-              Cancel
-            </button>
-            <button
-              className="btn primary"
-              onClick={exportData}
-              disabled={!filtered.length}
-            >
-              <ArrowDownToLine size={16} />
-              Download {exportType === "json" ? "JSON" : "CSV"}
-            </button>
-          </div>
-        </Modal>
-      )}
     </div>
   );
 }
+
+const POLICY_ROWS = [
+  [
+    "Up to $150",
+    "Immediate Supervisor. Treasurer or Controller if the supervisor is absent.",
+  ],
+  [
+    "Above $150 through $1,000",
+    "Immediate Supervisor → Controller or Vice President",
+  ],
+  ["Above $1,000", "Immediate Supervisor → Controller → Vice President"],
+  ["Raw materials, any amount", "Plant Manager or Controller"],
+];
+
 function People({
   w,
   request,
@@ -2662,12 +2245,9 @@ function People({
             <div key={m.id}>
               <span className="avatar">{initials(m.name)}</span>
               <div>
-                <strong>
-                  {m.name}
-                  {m.demo && <span className="sample-tag">SAMPLE</span>}
-                </strong>
+                <strong>{m.name}</strong>
                 <small>
-                  {m.email || "Demo member"}
+                  {m.email || ""}
                   {m.departments.length > 0
                     ? " · " +
                       (m.departments.length > 2
