@@ -33,6 +33,14 @@ Server-enforced approval routes, emergency handling, rejection reasons, revision
 
 The owner can use Workspace role to review the built-in employee, manager, and Accounting workflows. Role switching remains owner-only. Real users require Site access and a matching membership under People & access.
 
+## Security
+
+Production requests use HTTPS enforcement and browser transport-security headers.
+Purchasing responses and attachments use private, nonpersistent cache policies.
+Cloudflare provides automatic encryption at rest for the hosted D1 database and
+R2 files. See [NFR09 protection and verification](docs/security.md), including the
+separate implementation work still required for backup and recovery under NFR06.
+
 ## Development
 
 Use Node.js 24 or newer and pnpm 11.25.0.
@@ -63,6 +71,7 @@ The reproducible seed dataset is in `data/sample-requests.json`. Source provenan
 - `lib/purchasing/xlsx.ts`: native Excel export.
 - `lib/purchasing/domain.ts`: validation and purchasing rules.
 - `lib/purchasing/server.ts`: identity, persistence, scoped records, and audit writes.
+- `lib/purchasing/security.ts`: HTTPS enforcement and sensitive-response protection.
 - `drizzle/`: schema migrations and priority conversion.
 - `tests/`: business, API, date, migration, and workbook tests.
 

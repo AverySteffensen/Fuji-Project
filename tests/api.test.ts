@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
+import { businessDate } from "../lib/purchasing/domain.ts";
 // Exercises the actual route handlers against SQLite and a D1-compatible adapter.
 const sql = new DatabaseSync(":memory:");
 sql.exec(
@@ -228,7 +229,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
     async () => {
       const order = {
         poNumber: "TEST-PO-1",
-        orderedAt: new Date().toISOString().slice(0, 10),
+        orderedAt: businessDate(new Date().toISOString()),
         carrier: "Sample carrier",
         trackingNumber: "TEST-TRACK",
       };

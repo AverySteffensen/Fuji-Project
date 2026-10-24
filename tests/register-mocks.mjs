@@ -3,6 +3,8 @@ import { pathToFileURL } from "node:url";
 const root = process.cwd();
 registerHooks({
   resolve(specifier, context, nextResolve) {
+    if (specifier === "next/server")
+      return nextResolve("next/server.js", context);
     if (specifier === "cloudflare:workers")
       return {
         url: pathToFileURL(root + "/tests/mock-cloudflare.mjs").href,
