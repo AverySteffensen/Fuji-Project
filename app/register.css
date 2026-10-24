@@ -856,3 +856,30 @@ body {
     display: block;
   }
 }
+
+/* Account protection and owner tools */
+.security-screen { display: grid; min-height: 100vh; place-items: center; padding: 32px 16px; background: #f5f8f6; }
+.security-panel { width: min(100%, 540px); padding: 32px; background: white; border: 1px solid #d6e2da; border-radius: 8px; }
+.security-panel h1 { font-size: 28px; margin: 12px 0; }
+.security-panel p { margin: 12px 0; line-height: 1.6; }
+.security-panel label { display: grid; gap: 8px; margin: 18px 0; font-weight: 600; }
+.security-panel input { padding: 12px; border: 1px solid #9eb5a5; border-radius: 4px; width: 100%; font-size: 18px; }
+.security-panel .alert { display: grid; gap: 12px; }
+.recovery-codes { padding: 20px; background: #f2f6f3; font-size: 17px; line-height: 1.8; user-select: all; overflow-wrap: anywhere; }
+.session-warning { position: fixed; bottom: 20px; right: 20px; z-index: 10000; display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 18px; max-width: calc(100vw - 40px); background: #fff8de; border: 2px solid #8a6418; box-shadow: 0 4px 20px #0002; }
+.badge.withdrawn { color: #475467; background: #eef0f3; }
+.audit-change { border-top: 1px solid #dbe5df; padding: 12px 0; }
+.audit-change > div { display: grid; grid-template-columns: 60px minmax(0,1fr); gap: 8px; margin-top: 6px; }
+.audit-change pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font: inherit; font-size: 12px; }
+.operations-panel h3 { margin: 20px 0 12px; }
+.operations-panel p { line-height: 1.6; margin: 10px 0; }
+.operations-summary { display: grid; grid-template-columns: minmax(140px, 1fr) 2fr; gap: 12px; margin: 18px 0; }
+.operations-summary dt { color: #52675b; }
+.operations-summary dd { margin: 0; font-weight: 600; }
+.operations-table { overflow: auto; max-height: 340px; margin: 20px 0; border: 1px solid #d4e0d8; }
+.operations-table table { width: 100%; font-size: 14px; }
+.operations-table th, .operations-table td { padding: 12px; border-bottom: 1px solid #e1e9e4; text-align: left; }
+.operations-table th { background: #edf4ef; position: sticky; top: 0; }
+.operations-table small { display: block; max-width: 260px; color: #9e2424; }
+.register-grid-wrap[aria-busy="true"] { opacity: .7; }
+@media(max-width: 680px) { .register-account { flex-wrap: wrap; } .operations-summary { grid-template-columns: 1fr; gap: 6px; } .operations-summary dd { margin-bottom: 8px; } }

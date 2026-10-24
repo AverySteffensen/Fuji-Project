@@ -1,75 +1,55 @@
-# Purchasing requirements and acceptance criteria
+# Requirements implementation status
 
-Source material: Richard Holm's Team 2 inquiry; Chase Burton's response; the attached Purchase Proposal Form examples (revision 09/26/22); Purchasing Procedures dated March 22, 2012. This document records implementation decisions without treating unconfirmed interpretations as new Fuji policy.
+The current reference is the complete presentation with FR01–FR24 and NFR01–NFR13. The email and purchasing procedure remain the source of business rules. Targets below are acceptance criteria, not provider guarantees.
 
-## Form and email mapping
+## Functional requirements
 
-| Source requirement                         | App behavior                                                                                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| Item requested, estimated price            | One or more line items with description, part number, quantity, unit price, calculated line totals and request total     |
-| Quote number if applicable                 | Optional primary quote number; three optional comparative quotes with vendor, quote number and amount                    |
-| Brief explanation                          | Required business purpose and contents                                                                                   |
-| Supplier and reason                        | Required supplier; optional selection explanation                                                                        |
-| Supplier contact if applicable             | Contact name, email and phone                                                                                            |
-| Department marked as on the PO             | All 15 department choices shown on the supplied form, including the printed numeric codes                                |
-| Date and date needed                       | System submission timestamp and required needed-by date                                                                  |
-| Facilities, Lease, Other                   | Purchase type; Raw materials added to apply the documented exception                                                     |
-| Priority / “rush”                          | Employee chooses Normal or Rush; rush is visible in lists and detail                                                     |
-| Requester signature                        | Trusted signed-in identity and submission timestamp, retained in audit history; not a legal electronic-signature service |
-| Supervisor, Controller, VP signatures      | Role-authorized decisions with name, exact UTC timestamp and visible Eastern time                                        |
-| PO number is added later by Accounting     | Excluded from employee submission; accounting-only order editor                                                          |
-| Acct number / purchaser initials           | Accounting-only order fields                                                                                             |
-| Invoice to Accounting                      | Optional invoice-forwarded date in accounting order details                                                              |
-| Vendor contact / project manager           | Supplier contact fields and optional project manager                                                                     |
-| Verify approval                            | Approval path, individual decisions, final approved date, status and audit history                                       |
-| Revise and resubmit rejected proposals     | Requester can edit and submit a new revision; a full previous-version snapshot and all earlier events remain available   |
-| Date approved and date ordered             | Distinct, prominent fields in request detail, tables and exports                                                         |
-| Tracking information                       | Carrier, tracking number, HTTPS link, expected delivery and received date                                                |
-| Find past purchases                        | Full search, filters, order history, supplier totals and reorder-from-history                                            |
-| Excel / Google Sheets export               | UTF-8 CSV with request, line-item and audit formats; JSON backup includes complete nested records                        |
-| Notifications not necessary                | No automatic email or external messaging. Rejection reasons are retained for manual communication                        |
-| Pending, Approved, Rejected are sufficient | Proposal status remains these three values. Ordered/Received are independent fulfillment labels                          |
+| IDs       | Implemented behavior                                                                                                                                                                                                                    |
+| --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FR01–FR02 | Sites sign-in, membership checks, server-enforced roles and department scope.                                                                                                                                                           |
+| FR03–FR05 | Validated submission, authoritative requester/date/status, calculated totals and confirmation. Cancellation creates no proposal.                                                                                                        |
+| FR06      | Employee register and detail queries include only authorized owned requests.                                                                                                                                                            |
+| FR07–FR12 | Only the current authorized reviewer can decide a Pending request. Rejections need reasons. Decisions retain dates, comments and history. Missing or conflicting updates record no decision. Final Approved status requires every step. |
+| FR13–FR14 | Department, supplier, needed-by date, items, contacts, quotes, freight/tax and authoritative monetary calculations.                                                                                                                     |
+| FR15      | Type/amount approval routing, department scope and emergency verbal approval with written follow-up.                                                                                                                                    |
+| FR16      | Requester revision/resubmission retains previous versions and starts fresh approval steps.                                                                                                                                              |
+| FR17      | Private R2 files through permission-checked attachment endpoints.                                                                                                                                                                       |
+| FR18–FR19 | Accounting PO/account/initials, order date, carrier, tracking, expected/actual delivery and invoice-forwarded date.                                                                                                                     |
+| FR20      | Search includes items, part numbers, suppliers, requester, department, quote, PO and explanation. Reordering starts a new proposal.                                                                                                     |
+| FR21      | Inclusive date ranges, missing dates last, server sorting and pagination. Presets reflect the displayed selection.                                                                                                                      |
+| FR22      | Every tab exports modern Excel. Register exports include every matching row across pages in selected order.                                                                                                                             |
+| FR23      | Requester-only withdrawal of Pending unordered proposals, a separate Withdrawn state, blocked further decisions and retained history.                                                                                                   |
+| FR24      | Accounting-only final invoice amount, dollar variance and percentage variance from the approved total, including typed Excel columns.                                                                                                   |
 
-## Approval routes
+## Nonfunctional requirements
 
-| Type / amount                                      | Required sign-off                                                                                               |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| Ordinary purchase, total up to and including $150  | Immediate Supervisor; Treasurer or Controller if supervisor is unavailable                                      |
-| Ordinary purchase, total above $150 through $1,000 | Immediate Supervisor, then either Controller or Vice President                                                  |
-| Ordinary purchase, total above $1,000              | Immediate Supervisor, then Controller, then Vice President                                                      |
-| Raw materials, any amount                          | Plant Manager or Controller                                                                                     |
-| Emergency production                               | Prior verbal approval from Plant Manager; normal written approvals still required within one day                |
-| Emergency BA                                       | Prior verbal approval from Vice President or Controller; normal written approvals still required within one day |
+| ID    | Implementation and verification boundary                                                                                                                                                                                                                                                                                                        |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| NFR01 | D1 persistence, atomic record/index/audit batches, version checks, and conflict/concurrency tests. Restored versions advance beyond current versions to reject stale clients.                                                                                                                                                                   |
+| NFR02 | Visible labels/focus, keyboard controls, focus-trapped dialogs, responsive tables and an explicit Overdue label. Browser interaction review remains required when preview is available.                                                                                                                                                         |
+| NFR03 | Every purchasing route checks platform identity, live membership, app authorization session and record scope. Attachment and export routes follow the same checks.                                                                                                                                                                              |
+| NFR04 | Server-calculated amounts and variance, bounded numeric inputs, real calendar dates and consistent Eastern business dates.                                                                                                                                                                                                                      |
+| NFR05 | Standard `.xlsx`, typed dates and money, literal user strings, filterable tables and overdue formatting.                                                                                                                                                                                                                                        |
+| NFR06 | Transactional snapshots, independent attachment copies, signed manifests, checksum checks, 30-day retention, safety snapshot, recoverable catalog and atomic business-record restoration. Hourly operation requires the independent service. One-hour RPO and 30-minute RTO require measurement with Fuji's actual record/file volume and plan. |
+| NFR07 | Indexed server filters/page queries and scoped exports. A local 10,000-request/25-caller benchmark checks p95 below 2 seconds and a 1,000-request export below 10 seconds. Network/hosted performance needs separate load testing.                                                                                                              |
+| NFR08 | No shift/hour restrictions. A 24/7 independent monitor and monthly check/coverage metrics support the 99.9% target. Actual monthly availability cannot be certified by code or local tests.                                                                                                                                                     |
+| NFR09 | HTTPS enforcement, HSTS, sensitive-response no-store policies and private D1/R2 storage. Cloudflare encrypts hosted records, files and backup objects at rest. Authenticator secrets also have application-level encryption.                                                                                                                    |
+| NFR10 | Authenticator enrollment and verification required for every non-employee role, including owner-controlled personas through the real owner's authorization. Single-use recovery codes, encrypted factors, replay prevention and attempt limits. Each privileged user must enroll.                                                               |
+| NFR11 | Every business mutation logs actor/time/changed values. Database triggers reject modification/deletion. Restoration retains later history and logs the restored or removed records. No application endpoint edits audit history.                                                                                                                |
+| NFR12 | Server-enforced 15-minute idle session, non-refreshing status polls, activity heartbeat, one-minute warning, logout and a hosted top-level sign-out link. Primary sign-in remains platform-managed.                                                                                                                                             |
+| NFR13 | Independent scheduled Worker probes every 60 seconds, alerts during app outages, retries failed deliveries and reports failed/overdue backups. Activation requires a configured operating account, KV, service authorization and support webhook. Five-minute notification timing must be verified with that destination.                       |
 
-Rules use the complete estimated total, including freight and tax. This conservatively avoids under-routing purchases with extra costs. Approvals happen in displayed order and cannot be performed by the requester. Supervisors are limited to assigned departments. Final approved status is assigned only after every required step is complete.
+## Approval policy interpretations
 
-## Explicit interpretations
+- Up to and including $150: Supervisor, with Treasurer/Controller fallback when unavailable.
+- Above $150 through $1,000: Supervisor then either Controller or Vice President.
+- Above $1,000: Supervisor then Controller then Vice President.
+- Raw materials: Plant Manager or Controller.
+- Production emergencies: verbal Plant Manager approval. BA emergencies: verbal Vice President or Controller approval. Written approvals remain due within 24 hours.
+- Totals include freight and tax. No self-approval. Only Accounting enters orders; ordinary orders require complete approvals. Rejected or withdrawn proposals cannot be ordered.
 
-1. The source's two lowest tiers overlap at $150. Exactly $150 is assigned to the basic tier.
-2. The middle-tier wording is interpreted as Supervisor **and** either Controller **or** VP. The larger tier requires all three. Some sample forms do not display every signature prescribed by the old procedure; the written procedure governs app routing.
-3. Sequential approval order is an implementation choice for a clear queue; the procedure does not specify parallel approval.
-4. Raw-material approval replaces ordinary dollar-tier approval, matching the word “only” in the source.
-5. “Within one day” is represented as a 24-hour deadline after the recorded verbal approval. Overdue written sign-offs are visibly flagged. An emergency order never changes Pending into Approved, and a rejected emergency cannot be ordered.
-6. Only Accounting records purchase orders. This is a practical role assignment based on Chase's explanation of adding PO numbers.
-7. No delivery carrier integration is assumed. Accounting records tracking details manually; links must use HTTPS.
-8. There is no background email, notification, or supplier order transmission. Recording an order documents an order placed through Fuji's existing process.
+Withdrawn is a later, explicitly requested lifecycle addition to Chase's original Pending/Approved/Rejected statuses. Order/Received remain fulfillment fields. Operational support alerts serve the new monitoring requirement; purchase-status email notifications remain absent.
 
-## Acceptance criteria
+## Operational acceptance still required
 
-- Required fields and finite nonnegative monetary values are validated server-side; request totals are recalculated rather than trusted from the browser.
-- Employees cannot forge requester identity, approval status, PO fields, or final approval timestamps through submission.
-- Approvals require the current step's role; duplicate, out-of-order, and self-approvals are blocked.
-- A rejection requires a reason. Only its requester can revise a rejected proposal; previous versions remain immutable history.
-- Accounting cannot order an ordinary pending or rejected proposal. Date ordered cannot precede the applicable final/verbal approval date or lie in the future.
-- The current proposal version is required for every update. Conflicting writes return 409 and create no duplicate approval or audit event.
-- Purchase records, decisions, attachments metadata and audit history persist in D1. File contents persist in R2.
-- Authentication and membership are checked on every endpoint. Demo personas are owner-controlled and cannot access non-sample records.
-- Data exports obey the currently visible records and filters, include every comparative quote and approval/order date, and neutralize spreadsheet formulas in untrusted cells.
-- Search includes every line item's description and part number, supplier, requester, department, quote, PO, project manager and explanation.
-- Controls have visible labels and focus indicators. Dialogs trap focus, support Escape and restore focus when closed. Tables can scroll on narrow screens.
-
-## CSV guidance
-
-Choose **Request summary** for one row per proposal. Choose **Purchase line items** to analyze parts, quantities and unit prices. In the line-item file, use **Line total** for item-level sums: **Request total**, **Freight**, and **Tax** repeat on each item and must not be summed across item rows. A true complete record export is available as JSON, including all prior revisions and attachment metadata.
-
-Every seeded record has `sample: true`, and CSV exports include **Sample data**. All 64 seeded records are fictional; one shrink-wrap item and amount are inspired by a supplied example. Uploaded source PDFs and signatures are not redistributed.
+Connect and verify the independent service, configure and test the real support alert destination, enroll all real privileged users, run a restore exercise with representative attachments, and measure hosted performance and monthly availability. The Operations page separates a configured/active service from code that has merely been installed.

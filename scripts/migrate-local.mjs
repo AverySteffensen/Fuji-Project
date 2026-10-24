@@ -38,7 +38,7 @@ const result = spawnSync(
     "--config",
     config,
     "--persist-to",
-    resolve(root, process.argv[2] || ".wrangler/state"),
+    resolve(root, process.argv[2] || ".wrangler/requirements-v3"),
   ],
   { cwd: root, stdio: "inherit" },
 );

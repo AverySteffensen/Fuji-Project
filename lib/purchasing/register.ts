@@ -33,7 +33,46 @@ export type RegisterFilters = {
   overdueOnly: boolean;
   sortField: SortField;
   direction: "asc" | "desc";
+  period?: DatePeriod;
 };
+export type DatePeriod = "all" | "7" | "30" | "month" | "year" | "custom";
+export const SORT_FIELDS: Record<SortField, string> = {
+  ...DATE_FIELDS,
+  number: "Request number",
+  title: "Item / supplier",
+  supplier: "Supplier",
+  department: "Department",
+  requesterName: "Requested by",
+  total: "Amount",
+  priority: "Priority",
+  status: "Status",
+};
+export function periodDates(period: DatePeriod, today: string) {
+  if (period === "all") return { from: "", to: "" };
+  if (period === "custom") return {};
+  const start =
+    period === "month"
+      ? `${today.slice(0, 7)}-01`
+      : period === "year"
+        ? `${today.slice(0, 4)}-01-01`
+        : new Date(
+            Date.parse(`${today}T12:00:00Z`) - (Number(period) - 1) * 86400000,
+          )
+            .toISOString()
+            .slice(0, 10);
+  return { from: start, to: today };
+}
+export function periodSelection(
+  f: Pick<RegisterFilters, "period" | "from" | "to">,
+  today: string,
+): DatePeriod {
+  if (!f.from && !f.to) return "all";
+  const period = f.period ?? "custom";
+  const expected = periodDates(period, today);
+  return period !== "custom" && expected.from === f.from && expected.to === f.to
+    ? period
+    : "custom";
+}
 export const DEFAULT_FILTERS: RegisterFilters = {
   view: "requests",
   search: "",
@@ -47,6 +86,7 @@ export const DEFAULT_FILTERS: RegisterFilters = {
   overdueOnly: false,
   sortField: "submittedAt",
   direction: "desc",
+  period: "all",
 };
 export function requestDate(p: Purchase, field: DateField): string {
   const value =
@@ -61,6 +101,7 @@ export function isOverdue(
 ): boolean {
   return (
     p.status !== "Rejected" &&
+    p.status !== "Withdrawn" &&
     !p.order?.receivedAt &&
     Boolean(p.neededBy && p.neededBy < today)
   );
@@ -77,13 +118,29 @@ export function selectRequests(
     .filter((p) => {
       if (f.view === "approvals" && !canApprove(w.me, p)) return false;
       if (f.view === "history" && !p.order) return false;
-      if (f.status && p.status !== f.status) return false;
+      if (f.view !== "approvals" && f.status && p.status !== f.status)
+        return false;
       if (f.department && p.department !== f.department) return false;
       if (f.priority && p.priority !== f.priority) return false;
-      if (f.fulfillment === "Not ordered" && p.order) return false;
-      if (f.fulfillment === "Ordered" && (!p.order || p.order.receivedAt))
+      if (
+        f.view !== "approvals" &&
+        f.view !== "history" &&
+        f.fulfillment === "Not ordered" &&
+        p.order
+      )
         return false;
-      if (f.fulfillment === "Received" && !p.order?.receivedAt) return false;
+      if (
+        f.view !== "approvals" &&
+        f.fulfillment === "Ordered" &&
+        (!p.order || p.order.receivedAt)
+      )
+        return false;
+      if (
+        f.view !== "approvals" &&
+        f.fulfillment === "Received" &&
+        !p.order?.receivedAt
+      )
+        return false;
       if (f.overdueOnly && !isOverdue(p, today)) return false;
       const date = requestDate(p, f.dateField);
       if (

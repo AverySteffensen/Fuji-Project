@@ -1,7 +1,7 @@
 name: Verify purchasing app
 on:
   push:
-    branches: [main, spreadsheet-interface]
+    branches: [main, spreadsheet-interface, requirements-completion]
   pull_request:
 permissions:
   contents: read
@@ -21,5 +21,7 @@ jobs:
         run: pnpm test
       - name: Check types
         run: pnpm typecheck
+      - name: Verify the local performance baseline
+        run: pnpm benchmark
       - name: Build the app
         run: pnpm build

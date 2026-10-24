@@ -1,92 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { DatabaseSync } from "node:sqlite";
-import { readFileSync } from "node:fs";
 import { businessDate } from "../lib/purchasing/domain.ts";
-// Exercises the actual route handlers against SQLite and a D1-compatible adapter.
-const sql = new DatabaseSync(":memory:");
-sql.exec(
-  readFileSync("drizzle/0000_futuristic_doctor_doom.sql", "utf8").replaceAll(
-    "--> statement-breakpoint",
-    "",
-  ),
-);
-class Statement {
-  values: any[] = [];
-  query: string;
-  constructor(query: string) {
-    this.query = query;
-  }
-  bind(...v: any[]) {
-    this.values = v;
-    return this;
-  }
-  async first() {
-    return sql.prepare(this.query).get(...this.values) ?? null;
-  }
-  async all() {
-    return {
-      results: sql.prepare(this.query).all(...this.values),
-      success: true,
-    };
-  }
-  async run() {
-    const r = sql.prepare(this.query).run(...this.values);
-    return { success: true, meta: { changes: Number(r.changes) } };
-  }
-}
-const objects = new Map<string, { body: ArrayBuffer; type: string }>();
-(globalThis as any).__testEnv = {
-  DB: {
-    prepare: (q: string) => new Statement(q),
-    batch: async (statements: Statement[]) => {
-      sql.exec("BEGIN");
-      try {
-        const result = [];
-        for (const st of statements) {
-          const r = sql.prepare(st.query).run(...st.values);
-          result.push({ success: true, meta: { changes: Number(r.changes) } });
-        }
-        sql.exec("COMMIT");
-        return result;
-      } catch (e) {
-        sql.exec("ROLLBACK");
-        throw e;
-      }
-    },
-  },
-  BUCKET: {
-    put: async (id: string, body: ArrayBuffer, opts: any) =>
-      objects.set(id, { body, type: opts.httpMetadata.contentType }),
-    get: async (id: string) => objects.get(id),
-    delete: async (id: string) => objects.delete(id),
-  },
-};
-const workspace = await import("../app/api/workspace/route.ts");
-const create = await import("../app/api/requests/route.ts");
-const update = await import("../app/api/requests/[id]/route.ts");
-const people = await import("../app/api/members/route.ts");
-const attachment = await import("../app/api/attachments/[id]/route.ts");
-const identity = (id = "owner-1", email = "owner@example.test") => {
-  (globalThis as any).__testAuthHeaders = new Headers({
-    "oai-authenticated-user-id": id,
-    "oai-authenticated-user-email": email,
-  });
-};
-const req = (method = "GET", actor = "", data?: any) =>
-  new Request("https://test.local/api", {
-    method,
-    headers: {
-      ...(actor ? { "x-demo-member": actor } : {}),
-      ...(data ? { "Content-Type": "application/json" } : {}),
-      Origin: "https://test.local",
-    },
-    ...(data ? { body: JSON.stringify(data) } : {}),
-  });
-const read = async (r: Response) => ({
-  status: r.status,
-  data: (await r.json()) as any,
-});
+import { createHarness } from "./harness.ts";
+const harness = await createHarness();
+const { sql, objects, req, read, identity } = harness;
+const { workspace, create, update, people, attachment, register } =
+  harness.routes;
 const input = {
   department: "Packaging (90)",
   purchaseType: "Facilities",
@@ -107,15 +26,17 @@ const input = {
   quotes: [],
 };
 test("persistent API workflow, permissions, version conflicts, attachments, and membership", async (t) => {
-  identity();
+  await identity();
   let initial: any, created: any;
   await t.test("initial workspace seeds 64 samples exactly once", async () => {
     initial = await read(await workspace.GET(req()));
     assert.equal(initial.status, 200);
-    assert.equal(initial.data.requests.length, 64);
+    assert.equal(initial.data.requests.length, 0);
+    assert.equal((await read(await register.GET(req()))).data.total, 64);
     assert.equal(initial.data.owner, true);
     const second = await read(await workspace.GET(req()));
-    assert.equal(second.data.requests.length, 64);
+    assert.equal(second.data.requests.length, 0);
+    assert.equal((await read(await register.GET(req()))).data.total, 64);
   });
   await t.test(
     "server ignores forged ownership/status and calculates totals",
@@ -256,6 +177,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
         headers: {
           "x-demo-member": "demo-employee",
           Origin: "https://test.local",
+          Cookie: harness.cookies.get("owner-1")!,
         },
         body: f,
       });
@@ -280,9 +202,14 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
     "workspace reload retains proposal, approvals, PO, and attachment",
     async () => {
       const reload = await read(
-        await workspace.GET(req("GET", "demo-employee")),
+        await register.GET(req("GET", "demo-employee")),
       );
-      const found = reload.data.requests.find((p: any) => p.id === created.id);
+      const details = await read(
+        await update.GET(req("GET", "demo-employee"), {
+          params: Promise.resolve({ id: created.id }),
+        }),
+      );
+      const found = details.data.purchase;
       assert.ok(found);
       assert.equal(found.approvals.length, 3);
       assert.equal(found.attachments.length, 1);
@@ -331,7 +258,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
         ).status,
         400,
       );
-      identity("member-login", "member@example.test");
+      await identity("member-login", "member@example.test");
       const nonOwner = await read(await workspace.GET(req()));
       assert.equal(nonOwner.status, 200);
       assert.equal(nonOwner.data.owner, false);
@@ -353,7 +280,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
         ).status,
         403,
       );
-      identity();
+      await identity();
     },
   );
   await t.test(
@@ -411,7 +338,11 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
         ["null", 400],
       ] as const) {
         const r = await create.POST(
-          new Request("https://test.local/api", { method: "POST", body }),
+          new Request("https://test.local/api", {
+            method: "POST",
+            body,
+            headers: { Cookie: harness.cookies.get("owner-1")! },
+          }),
         );
         assert.equal(r.status, status);
       }
@@ -424,7 +355,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
       assert.equal(r.status, 201);
       assert.equal(r.data.sample, false);
       const demoView = await read(
-        await workspace.GET(req("GET", "demo-accounting")),
+        await register.GET(req("GET", "demo-accounting")),
       );
       assert.equal(
         demoView.data.requests.some((p: any) => p.id === r.data.id),
@@ -448,6 +379,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
         method: "POST",
         headers: {
           Origin: "https://evil.test",
+          Cookie: harness.cookies.get("owner-1")!,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(input),
@@ -455,7 +387,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
       assert.equal((await read(await create.POST(cross))).status, 403);
       (globalThis as any).__testAuthHeaders = new Headers();
       assert.equal((await read(await workspace.GET(req()))).status, 401);
-      identity();
+      await identity();
     },
   );
   sql.close();

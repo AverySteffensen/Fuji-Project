@@ -15,6 +15,20 @@
       "when": 1792780187025,
       "tag": "0001_priority_levels",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792810432672,
+      "tag": "0002_requirements_completion",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1792810737794,
+      "tag": "0003_restore_storage_keys",
+      "breakpoints": true
     }
   ]
 }

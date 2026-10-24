@@ -10,7 +10,7 @@ flowchart TD
     D --> E[Purchasing business rules]
     E --> F[(D1 records and audit)]
     E --> G[(R2 attachments)]
-    C --> H[Scoped CSV and JSON exports]
+    C --> H[Scoped XLSX exports]
 ```
 
 ## Data model
@@ -23,7 +23,7 @@ flowchart TD
 | `audit_events`      | Append-only UUID, proposal ID, dated event document and optional complete prior-version snapshot    |
 | `attachments`       | UUID, owning proposal, safe filename, allowed media type and size; contents are keyed by UUID in R2 |
 
-Nested items, comparative quotes, approvals, order details, and attachment references live in the authoritative request JSON. The version column enables atomic optimistic writes. This keeps the course project small while retaining typed, testable business rules.
+Nested items, comparative quotes, approvals, order details, and attachment references live in the authoritative request JSON. The version column enables atomic optimistic writes. A separate register index supports scoped server queries and pagination while retaining the authoritative documents.
 
 All IDs used in SQL are bound parameters. Request ownership, totals, decisions and timestamps are assigned or validated on the server. The UI's enabled/disabled state is a convenience, not an authorization boundary.
 
@@ -46,10 +46,18 @@ Owner-only demo switching is verified on the server. `x-demo-member` cannot chan
 
 Audit timestamps are ISO UTC instants; the UI displays Eastern time. Order, needed-by, receipt and invoice dates are calendar dates. Date comparisons use `America/New_York`, including around UTC midnight.
 
-CSV cells are quoted and escaped. Strings that could be interpreted as spreadsheet formulas are prefixed with an apostrophe. The byte-order mark helps Excel recognize UTF-8. Numeric money/quantity values retain numeric representations. Records are exported only after the API has filtered them for the effective member.
+Exports are modern XLSX workbooks with typed dates and money. User strings remain literal spreadsheet text. Register exports query all matching authorized rows on the server, preserving the selected order across pages. They include invoice variance and audit changes. Withdrawn, rejected and received requests do not receive overdue formatting.
 
 File uploads accept PDF, JPEG, PNG and text up to 10 MB, with ten files per proposal. Downloads check record access, force an attachment disposition, disable sniffing and avoid public object URLs. No source PDF, signature, access token, local database, or live attachment is committed to GitHub.
 
 ## Operational scope
 
-The hosted app is private and persistent. It is an academic implementation with owner-controlled demo personas, documented interpretations of a 2012 policy, and manual shipment entry. It is not connected to Fuji's ERP, supplier ordering, carrier feeds, or email. The code does not present saved order records as actual supplier submissions.
+The third hosted app is private and persistent, with its own database and files. It retains owner-controlled personas, documented interpretations of the purchasing procedure and manual shipment entry. It is not connected to Fuji's ERP, supplier ordering, carrier feeds, or email. The code does not present saved order records as actual supplier submissions.
+
+## Version 3 operations
+
+`request_index` stores authoritative filter/sort/access fields in the same transaction as purchases and audit events. The browser receives a page, while detail history and complete XLSX exports use separately authorized routes.
+
+`app_sessions` and `security_factors` add idle authorization and encrypted TOTP factors without replacing hosted identity. `security_events` is append-only. Backups use `backup_runs` plus temporary `backup_rows` for a consistent transactional snapshot. Signed R2 manifests and private file copies survive loss of the D1 catalog. Restoration stages and verifies data, swaps records atomically, preserves audit history and keeps account privileges current.
+
+The independent Worker in `operations/` requires operating-account configuration. It probes every minute, triggers hourly backups and forwards alerts. Dashboard coverage and scheduler status distinguish active service from installed code. See `operations.md` and `requirements.md` for verification limits.

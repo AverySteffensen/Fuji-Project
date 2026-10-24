@@ -118,7 +118,7 @@ function worksheet(sheet: ExcelSheet): string {
   ) {
     const rule = sheet.overdueRule;
     const formula = rule
-      ? `AND(ISNUMBER($${columnName(rule.due)}2),$${columnName(rule.due)}2<TODAY(),$${columnName(rule.status)}2<>"Rejected",$${columnName(rule.received)}2="")`
+      ? `AND(ISNUMBER($${columnName(rule.due)}2),$${columnName(rule.due)}2<TODAY(),$${columnName(rule.status)}2<>"Rejected",$${columnName(rule.status)}2<>"Withdrawn",$${columnName(rule.received)}2="")`
       : `$${columnName(sheet.overdueColumn!)}2="Overdue"`;
     conditional = `<conditionalFormatting sqref="A2:${end}"><cfRule type="expression" dxfId="0" priority="1"><formula>${xml(formula)}</formula></cfRule></conditionalFormatting>`;
   }
@@ -258,11 +258,13 @@ export function purchaseSheets(
     "Received on",
     "Invoice to accounting",
     "Verbal approved at",
+    "Withdrawn at",
   ]);
   const timeHeaders = new Set([
     "Submitted at",
     "Approved at",
     "Verbal approved at",
+    "Withdrawn at",
   ]);
   const headers = keep.map((i) => String(rows[0][i]));
   const currency = headers.flatMap((h, i) =>
@@ -362,6 +364,7 @@ export function purchaseSheets(
           "Date and time (Eastern)",
           "Revision",
           "Note",
+          "Changed values",
         ],
         ...workspace.audit
           .filter((a) => ids.has(a.requestId))
@@ -372,6 +375,7 @@ export function purchaseSheets(
             typedDate(a.at, true),
             a.revision,
             a.note,
+            a.changes ? JSON.stringify(a.changes) : "",
           ]),
       ],
     },

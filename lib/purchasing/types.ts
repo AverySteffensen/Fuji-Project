@@ -46,6 +46,7 @@ export type Member = {
   departments: string[];
   demo: boolean;
   userId?: string;
+  active?: boolean;
 };
 export type LineItem = {
   description: string;
@@ -80,6 +81,7 @@ export type Order = {
   receivedAt: string;
   invoiceAt: string;
   notes: string;
+  finalInvoiceAmount?: number | null;
 };
 export type Purchase = {
   id: string;
@@ -104,7 +106,9 @@ export type Purchase = {
   freight: number;
   tax: number;
   total: number;
-  status: "Pending" | "Approved" | "Rejected";
+  status: "Pending" | "Approved" | "Rejected" | "Withdrawn";
+  withdrawnAt?: string;
+  withdrawalReason?: string;
   approvals: Approval[];
   rejectionReason: string;
   submittedAt: string;
@@ -135,6 +139,7 @@ export type Audit = {
   note: string;
   revision: number;
   previousVersion?: Purchase;
+  changes?: { field: string; before: unknown; after: unknown }[];
 };
 export type Workspace = {
   me: Member;

@@ -9,9 +9,11 @@ import {
 } from "./types.ts";
 export class BusinessError extends Error {
   status: number;
-  constructor(message: string, status = 400) {
+  code?: string;
+  constructor(message: string, status = 400, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 export const money = (n: number) =>
@@ -35,6 +37,11 @@ const date = (v: unknown) => {
   return s;
 };
 const num = (v: unknown, min = 0, max = 100000000) => {
+  if (
+    (typeof v !== "number" && typeof v !== "string") ||
+    (typeof v === "string" && !v.trim())
+  )
+    throw new BusinessError("Enter a valid amount or quantity.");
   const n = Number(v);
   if (!Number.isFinite(n) || n < min || n > max)
     throw new BusinessError("Enter a valid, nonnegative amount or quantity.");
@@ -99,6 +106,18 @@ export function canApprove(m: Member, p: Purchase) {
   );
 }
 export function sanitizeRequest(input: Record<string, any>): Partial<Purchase> {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new BusinessError("Enter valid proposal fields.");
+  if (
+    Array.isArray(input.items) &&
+    input.items.some((i) => !i || typeof i !== "object" || Array.isArray(i))
+  )
+    throw new BusinessError("Enter valid line items.");
+  if (
+    Array.isArray(input.quotes) &&
+    input.quotes.some((q) => !q || typeof q !== "object" || Array.isArray(q))
+  )
+    throw new BusinessError("Enter valid quotes.");
   const items = (Array.isArray(input.items) ? input.items : [])
     .slice(0, 40)
     .map((i) => ({
@@ -276,12 +295,14 @@ export function saveOrder(
   input: Record<string, any>,
   now: string,
 ): Purchase {
+  if (!input || typeof input !== "object" || Array.isArray(input))
+    throw new BusinessError("Enter valid order details.");
   if (!hasRole(m, "accounting"))
     throw new BusinessError(
       "Only Accounting can enter purchase order information.",
       403,
     );
-  if (p.status === "Rejected")
+  if (p.status === "Rejected" || p.status === "Withdrawn")
     throw new BusinessError(
       "Rejected proposals cannot be ordered. Revise and obtain fresh approvals.",
     );
@@ -322,8 +343,50 @@ export function saveOrder(
     receivedAt,
     invoiceAt,
     notes: text(input.notes),
+    finalInvoiceAmount:
+      input.finalInvoiceAmount === undefined ||
+      input.finalInvoiceAmount === null ||
+      input.finalInvoiceAmount === ""
+        ? null
+        : cents(num(input.finalInvoiceAmount)),
   };
   return { ...p, order, updatedAt: now };
+}
+export function withdraw(
+  p: Purchase,
+  m: Member,
+  reason: unknown,
+  now: string,
+): Purchase {
+  if (p.requesterId !== m.id)
+    throw new BusinessError(
+      "Only the requester can withdraw this proposal.",
+      403,
+    );
+  if (p.status !== "Pending" || p.order)
+    throw new BusinessError(
+      "Only Pending proposals that have not been ordered can be withdrawn.",
+    );
+  return {
+    ...p,
+    status: "Withdrawn",
+    withdrawnAt: now,
+    withdrawalReason: text(reason),
+    updatedAt: now,
+  };
+}
+export function invoiceVariance(p: Pick<Purchase, "total" | "order">) {
+  const amount = p.order?.finalInvoiceAmount;
+  if (amount === undefined || amount === null) return null;
+  const amountDifference = cents(amount - p.total);
+  return {
+    amount,
+    amountDifference,
+    percentageDifference:
+      p.total > 0
+        ? Math.round((amountDifference / p.total) * 10000) / 100
+        : null,
+  };
 }
 export function emergencyDue(p: Purchase) {
   return p.emergency
@@ -396,6 +459,11 @@ export function exportRows(purchases: Purchase[], lineItems = false) {
     "Quote 3 vendor",
     "Quote 3 number",
     "Quote 3 amount",
+    "Withdrawn at",
+    "Withdrawal reason",
+    "Final invoice amount",
+    "Invoice variance amount",
+    "Invoice variance percent",
   ];
   return [
     head,
@@ -479,6 +547,11 @@ export function exportRows(purchases: Purchase[], lineItems = false) {
           p.quotes[n]?.number ?? "",
           p.quotes[n]?.amount ?? "",
         ]),
+        p.withdrawnAt ?? "",
+        p.withdrawalReason ?? "",
+        p.order?.finalInvoiceAmount ?? "",
+        invoiceVariance(p)?.amountDifference ?? "",
+        invoiceVariance(p)?.percentageDifference ?? "",
       ]),
     ),
   ];

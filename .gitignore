@@ -1,5 +1,6 @@
 # Dependencies
 /node_modules/
+/node_modules
 /.pnp
 .pnp.*
 # Keep authored Yarn tooling if the project adopts Yarn.
@@ -34,6 +35,7 @@ yarn-error.log*
 # Checkout-local tool state
 /.wrangler/
 /.sites-runtime/
+/operations/wrangler.jsonc
 
 # Workspace scaffolding and publication archives
 /.agents/

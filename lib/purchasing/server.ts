@@ -3,6 +3,8 @@ import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { BusinessError, canView, hasRole } from "./domain";
 import { DEMO_MEMBERS, buildSeed } from "./seed";
 import type { Member, Purchase, Audit } from "./types";
+import { enforceSecurity } from "./auth-security";
+import { indexStatement, rebuildIndex } from "./register-server";
 export const database = () => {
   if (!env.DB)
     throw new BusinessError("The purchasing database is not connected.", 503);
@@ -65,15 +67,25 @@ export async function initialize(user: {
           )
           .bind(a.id, a.requestId, JSON.stringify(a), a.at),
       ),
+      ...requests.map((p) => indexStatement(db, p)),
       db
         .prepare("INSERT OR IGNORE INTO app_settings(key,value) VALUES (?,?)")
         .bind("seed-v1", "complete"),
     ];
     await db.batch(sql);
   }
+  if (
+    !(await db
+      .prepare("SELECT value FROM app_settings WHERE key='register-index-v3'")
+      .first())
+  )
+    await rebuildIndex(db);
   return owner?.value === user.userId;
 }
-export async function context(request: Request) {
+export async function context(
+  request: Request,
+  options: { skipSecurity?: boolean } = {},
+) {
   let user = await getChatGPTUser();
   if (!user && import.meta.env?.DEV)
     user = {
@@ -104,6 +116,11 @@ export async function context(request: Request) {
       "Ask the workspace owner to add your email and role.",
       403,
     );
+  if (me.active === false)
+    throw new BusinessError(
+      "Your membership is inactive. Ask the workspace owner to review your access.",
+      403,
+    );
   if (!me.userId) {
     me = { ...me, userId: user.userId };
     const result = await database()
@@ -118,6 +135,9 @@ export async function context(request: Request) {
         403,
       );
   }
+  const principal = me;
+  if (!options.skipSecurity)
+    await enforceSecurity(request, user.userId, principal, database());
   const actor = request.headers.get("x-demo-member");
   if (actor) {
     if (!owner)
@@ -128,7 +148,7 @@ export async function context(request: Request) {
     me = members.find((m) => m.demo && m.id === actor);
     if (!me) throw new BusinessError("Unknown demo persona.");
   }
-  return { me, owner, members, user };
+  return { me, principal, owner, members, user };
 }
 export async function getPurchase(id: string) {
   const row = await database()
@@ -140,16 +160,6 @@ export async function getPurchase(id: string) {
 }
 export async function loadWorkspace(request: Request) {
   const ctx = await context(request);
-  const rows = await database()
-    .prepare("SELECT data FROM purchase_requests ORDER BY updated_at DESC")
-    .all<{ data: string }>();
-  const requests = rows.results
-    .map((r) => JSON.parse(r.data) as Purchase)
-    .filter((p) => canView(ctx.me, p));
-  const ids = new Set(requests.map((p) => p.id));
-  const events = await database()
-    .prepare("SELECT data FROM audit_events ORDER BY at DESC LIMIT 2000")
-    .all<{ data: string }>();
   return {
     me: ctx.me,
     owner: ctx.owner,
@@ -157,10 +167,8 @@ export async function loadWorkspace(request: Request) {
     members: hasRole(ctx.me, "admin")
       ? ctx.members
       : ctx.members.map((m) => ({ ...m, email: "" })),
-    requests,
-    audit: events.results
-      .map((r) => JSON.parse(r.data) as Audit)
-      .filter((a) => ids.has(a.requestId)),
+    requests: [] as Purchase[],
+    audit: [] as Audit[],
     demoMode: ctx.me.demo,
   };
 }
@@ -171,41 +179,81 @@ export async function writePurchase(
   extra: D1PreparedStatement[] = [],
 ) {
   const db = database();
+  const previous =
+    expectedVersion === undefined ? null : await getPurchase(p.id);
+  event.changes = Object.keys(p)
+    .filter((field) => !["lastMutationId", "version"].includes(field))
+    .filter(
+      (field) =>
+        JSON.stringify(previous?.[field as keyof Purchase] ?? null) !==
+        JSON.stringify(p[field as keyof Purchase] ?? null),
+    )
+    .map((field) => ({
+      field,
+      before: previous?.[field as keyof Purchase] ?? null,
+      after: p[field as keyof Purchase] ?? null,
+    }));
   p.lastMutationId = event.id;
   if (expectedVersion === undefined) {
-    await db.batch([
+    const result = await db.batch([
       db
         .prepare(
-          "INSERT INTO purchase_requests(id,data,version,updated_at) VALUES (?,?,?,?)",
+          "INSERT INTO purchase_requests(id,data,version,updated_at) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?)",
         )
-        .bind(p.id, JSON.stringify(p), p.version, p.updatedAt),
+        .bind(p.id, JSON.stringify(p), p.version, p.updatedAt, Date.now()),
       db
         .prepare(
-          "INSERT INTO audit_events(id,request_id,data,at) VALUES (?,?,?,?)",
+          "INSERT INTO audit_events(id,request_id,data,at) SELECT ?,?,?,? FROM purchase_requests WHERE id=? AND json_extract(data,'$.lastMutationId')=?",
         )
-        .bind(event.id, p.id, JSON.stringify(event), event.at),
+        .bind(event.id, p.id, JSON.stringify(event), event.at, p.id, event.id),
+      indexStatement(db, p, event.id),
     ]);
+    if (!result[0].meta.changes)
+      throw new BusinessError(
+        "Records are being restored. Try again when restoration finishes.",
+        503,
+      );
     return;
   }
   p.version = expectedVersion + 1;
   const result = await db.batch([
     db
       .prepare(
-        "UPDATE purchase_requests SET data=?,version=?,updated_at=? WHERE id=? AND version=?",
+        "UPDATE purchase_requests SET data=?,version=?,updated_at=? WHERE id=? AND version=? AND NOT EXISTS(SELECT 1 FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?)",
       )
-      .bind(JSON.stringify(p), p.version, p.updatedAt, p.id, expectedVersion),
+      .bind(
+        JSON.stringify(p),
+        p.version,
+        p.updatedAt,
+        p.id,
+        expectedVersion,
+        Date.now(),
+      ),
     db
       .prepare(
         "INSERT INTO audit_events(id,request_id,data,at) SELECT ?,?,?,? FROM purchase_requests WHERE id=? AND json_extract(data,'$.lastMutationId')=?",
       )
       .bind(event.id, p.id, JSON.stringify(event), event.at, p.id, event.id),
     ...extra,
+    indexStatement(db, p, event.id),
   ]);
-  if (!result[0].meta.changes)
+  if (!result[0].meta.changes) {
+    const lock = await db
+      .prepare(
+        "SELECT value FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?",
+      )
+      .bind(Date.now())
+      .first();
+    if (lock)
+      throw new BusinessError(
+        "Records are being restored. Try again when restoration finishes.",
+        503,
+      );
     throw new BusinessError(
       "This proposal changed while you were reviewing it. Refresh and try again.",
       409,
     );
+  }
 }
 export function assertSameOrigin(request: Request) {
   const origin = request.headers.get("origin");
@@ -215,7 +263,11 @@ export function assertSameOrigin(request: Request) {
 export const json = (data: unknown, status = 200) =>
   Response.json(data, { status, headers: { "Cache-Control": "no-store" } });
 export function handleError(e: unknown) {
-  if (e instanceof BusinessError) return json({ error: e.message }, e.status);
+  if (e instanceof BusinessError)
+    return json(
+      { error: e.message, ...(e.code ? { code: e.code } : {}) },
+      e.status,
+    );
   console.error(e);
   return json(
     { error: "The request could not be completed. Please try again." },

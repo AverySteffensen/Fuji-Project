@@ -104,11 +104,16 @@ export async function GET(
     const a = await database()
       .prepare("SELECT * FROM attachments WHERE id=?")
       .bind(id)
-      .first<{ request_id: string; name: string; type: string }>();
+      .first<{
+        request_id: string;
+        name: string;
+        type: string;
+        storage_key: string | null;
+      }>();
     if (!a) throw new BusinessError("File not found.", 404);
     const p = await getPurchase(a.request_id);
     if (!canView(me, p)) throw new BusinessError("Access denied.", 403);
-    const obj = await env.BUCKET?.get(id);
+    const obj = await env.BUCKET?.get(a.storage_key || id);
     if (!obj) throw new BusinessError("File not found.", 404);
     return new Response(obj.body, {
       headers: {

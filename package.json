@@ -1,6 +1,6 @@
 {
   "name": "fuji-purchasing-register",
-  "version": "2.0.0",
+  "version": "3.0.0",
   "private": true,
   "engines": {
     "node": ">=24"
@@ -9,10 +9,11 @@
     "install:ci": "bash scripts/install-pnpm.sh",
     "dev": "node scripts/run-framework.mjs dev",
     "build": "node scripts/run-framework.mjs build",
-    "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/state --ip 127.0.0.1 --inspector-port 0",
+    "start": "node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js dev --config dist/server/wrangler.json --local --persist-to .wrangler/requirements-v3 --ip 127.0.0.1 --inspector-port 0",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "test": "node --experimental-strip-types --import ./tests/register-mocks.mjs --test tests/*.test.ts",
+    "benchmark": "node --experimental-strip-types --import ./tests/register-mocks.mjs tests/performance.bench.ts",
     "typecheck": "tsc --noEmit",
     "db:local": "node scripts/migrate-local.mjs",
     "format": "prettier --write app lib/purchasing db tests docs README.md"

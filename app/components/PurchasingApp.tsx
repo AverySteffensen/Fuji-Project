@@ -1,4 +1,5 @@
 "use client";
+import OperationsPanel from "./OperationsPanel";
 import { useState, useEffect, useMemo, useRef, type FormEvent } from "react";
 import {
   LayoutDashboard,
@@ -53,15 +54,20 @@ import {
   hasRole,
   emergencyDue,
   businessDate,
+  invoiceVariance,
 } from "@/lib/purchasing/domain";
 import {
   DEFAULT_FILTERS,
   DATE_FIELDS,
+  SORT_FIELDS,
+  periodDates,
+  periodSelection,
   isOverdue,
   selectRequests,
   type RegisterFilters,
   type DateField,
   type SortField,
+  type DatePeriod,
 } from "@/lib/purchasing/register";
 import {
   createXlsx,
@@ -818,12 +824,37 @@ function OrderForm({
                 <input
                   type={type}
                   required={required}
-                  value={o[name]}
+                  value={o[name] ?? ""}
                   onChange={(e) => field(name, e.target.value)}
                 />
               </label>
             ))}
           </div>
+          <label>
+            Final invoice amount
+            <input
+              type="number"
+              min="0"
+              max="100000000"
+              step="0.01"
+              value={o.finalInvoiceAmount ?? ""}
+              onChange={(e) =>
+                setO({
+                  ...o,
+                  finalInvoiceAmount:
+                    e.target.value === "" ? null : Number(e.target.value),
+                })
+              }
+              placeholder="Enter when the final invoice arrives"
+            />
+          </label>
+          {invoiceVariance({ ...p, order: o }) && (
+            <p className="hint">
+              Approved total {money(p.total)}. Invoice variance{" "}
+              {money(invoiceVariance({ ...p, order: o })!.amountDifference)} (
+              {invoiceVariance({ ...p, order: o })!.percentageDifference}%).
+            </p>
+          )}
           <label>
             Order notes
             <textarea
@@ -876,6 +907,7 @@ function RequestDetail({
   const [tab, setTab] = useState("details"),
     [note, setNote] = useState(""),
     [error, setError] = useState("");
+  const [withdrawing, setWithdrawing] = useState(false);
   const act = async (a: string) => {
     try {
       setError("");
@@ -938,6 +970,15 @@ function RequestDetail({
                 Revise & resubmit
               </button>
             )}
+          </div>
+        )}
+        {p.status === "Withdrawn" && (
+          <div className="alert warning">
+            <strong>Proposal withdrawn</strong>
+            <p>
+              {fmt(p.withdrawnAt ?? "", true)}
+              {p.withdrawalReason ? ` · ${p.withdrawalReason}` : ""}
+            </p>
           </div>
         )}
         {p.emergency && (
@@ -1133,6 +1174,18 @@ function RequestDetail({
                   <dd>{fmt(p.order.receivedAt)}</dd>
                   <dt>Invoice to Accounting</dt>
                   <dd>{fmt(p.order.invoiceAt)}</dd>
+                  <dt>Final invoice amount</dt>
+                  <dd>
+                    {p.order.finalInvoiceAmount == null
+                      ? "Not recorded"
+                      : money(p.order.finalInvoiceAmount)}
+                  </dd>
+                  <dt>Variance from approved total</dt>
+                  <dd>
+                    {invoiceVariance(p)
+                      ? `${money(invoiceVariance(p)!.amountDifference)} (${invoiceVariance(p)!.percentageDifference}%)`
+                      : "Not recorded"}
+                  </dd>
                 </dl>
                 {p.order.notes && <p className="prewrap">{p.order.notes}</p>}
               </section>
@@ -1163,7 +1216,7 @@ function RequestDetail({
                         </p>
                       ) : (
                         <p>
-                          {p.status === "Rejected"
+                          {p.status === "Rejected" || p.status === "Withdrawn"
                             ? "Not completed"
                             : nextStep(p) === step
                               ? "Awaiting approval"
@@ -1189,6 +1242,34 @@ function RequestDetail({
                         {a.actorName} · Revision {a.revision}
                       </p>
                       <small className="prewrap">{a.note}</small>
+                      {!!a.changes?.length && (
+                        <details className="previous-version">
+                          <summary>View changed values</summary>
+                          {a.changes.map((change) => (
+                            <div key={change.field} className="audit-change">
+                              <strong>
+                                {change.field.replace(/([A-Z])/g, " $1")}
+                              </strong>
+                              <div>
+                                <span>Before</span>
+                                <pre>
+                                  {typeof change.before === "string"
+                                    ? change.before || "—"
+                                    : JSON.stringify(change.before, null, 2)}
+                                </pre>
+                              </div>
+                              <div>
+                                <span>After</span>
+                                <pre>
+                                  {typeof change.after === "string"
+                                    ? change.after || "—"
+                                    : JSON.stringify(change.after, null, 2)}
+                                </pre>
+                              </div>
+                            </div>
+                          ))}
+                        </details>
+                      )}
                       {a.previousVersion && (
                         <details className="previous-version">
                           <summary>
@@ -1264,6 +1345,39 @@ function RequestDetail({
             </div>
           </div>
         )}
+        {withdrawing &&
+          p.status === "Pending" &&
+          !p.order &&
+          p.requesterId === w.me.id && (
+            <div className="review-box">
+              <h3>Withdraw this proposal?</h3>
+              <p>This stops further approvals and keeps its history.</p>
+              <label>
+                Reason (optional)
+                <textarea
+                  rows={2}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                />
+              </label>
+              <div className="row">
+                <button
+                  className="btn"
+                  disabled={busy}
+                  onClick={() => setWithdrawing(false)}
+                >
+                  Keep proposal
+                </button>
+                <button
+                  className="btn danger"
+                  disabled={busy}
+                  onClick={() => act("withdraw")}
+                >
+                  {busy ? "Saving…" : "Confirm withdrawal"}
+                </button>
+              </div>
+            </div>
+          )}
         {error && (
           <div className="alert error" role="alert">
             {error}
@@ -1279,8 +1393,18 @@ function RequestDetail({
           <RotateCcw size={15} />
           Reorder
         </button>
+        {p.requesterId === w.me.id && p.status === "Pending" && !p.order && (
+          <button
+            className="btn danger"
+            disabled={busy}
+            onClick={() => setWithdrawing(true)}
+          >
+            Withdraw request
+          </button>
+        )}
         {hasRole(w.me, "accounting") &&
           p.status !== "Rejected" &&
+          p.status !== "Withdrawn" &&
           (p.status === "Approved" || p.emergency) && (
             <button className="btn primary" onClick={onOrder}>
               <Truck size={16} />
@@ -1305,6 +1429,19 @@ export default function PurchasingApp() {
   const [toast, setToast] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [register, setRegister] = useState({
+    total: 0,
+    value: 0,
+    page: 1,
+    pages: 1,
+    summary: { total: 0, pending: 0, overdue: 0, approvals: 0 },
+    departments: [] as string[],
+  });
+  const [registerLoading, setRegisterLoading] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
+  const [detail, setDetail] = useState<Purchase | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [operationsOpen, setOperationsOpen] = useState(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [form, setForm] = useState<{
     source?: Purchase;
@@ -1325,13 +1462,17 @@ export default function PurchasingApp() {
       },
     });
     const data: any = await response.json();
-    if (!response.ok)
+    if (!response.ok) {
+      if (["SESSION_REQUIRED", "MFA_REQUIRED"].includes(data.code))
+        window.dispatchEvent(new Event("fuji-security-required"));
       throw new Error(data.error || "The request could not be completed.");
+    }
     return data;
   };
   const refresh = async () => {
     const data = await request("/api/workspace");
     setW(data);
+    setReloadKey((n) => n + 1);
     return data;
   };
   useEffect(() => {
@@ -1375,28 +1516,91 @@ export default function PurchasingApp() {
     () => ({ ...filters, view }),
     [filters, view],
   );
-  const filtered = useMemo(
-    () => (w ? selectRequests(w, effectiveFilters, today) : []),
-    [w, effectiveFilters, today],
+  const queryParams = useMemo(
+    () =>
+      new URLSearchParams(
+        Object.entries({ ...effectiveFilters, page, size: pageSize }).map(
+          ([key, value]) => [key, String(value)],
+        ),
+      ).toString(),
+    [effectiveFilters, page, pageSize],
   );
-  const pages = Math.max(1, Math.ceil(filtered.length / pageSize));
-  const currentPage = Math.min(page, pages);
-  const visible = filtered.slice(
-    (currentPage - 1) * pageSize,
-    currentPage * pageSize,
-  );
-  const active = w?.requests.find((p) => p.id === selected);
-  const order = w?.requests.find((p) => p.id === orderId);
-  const inboxCount = w?.requests.filter((p) => canApprove(w.me, p)).length ?? 0;
-  const overdueCount =
-    w?.requests.filter((p) => isOverdue(p, today)).length ?? 0;
+  useEffect(() => {
+    if (!w || !["requests", "approvals", "history"].includes(view)) return;
+    let live = true;
+    if (filters.from && filters.to && filters.from > filters.to) {
+      setRegisterLoading(false);
+      setW((old) => (old ? { ...old, requests: [] } : old));
+      setRegister((old) => ({ ...old, total: 0, value: 0, page: 1, pages: 1 }));
+      return;
+    }
+    setRegisterLoading(true);
+    const timer = setTimeout(() => {
+      request(`/api/register?${queryParams}`)
+        .then((data) => {
+          if (!live) return;
+          setW((old) => (old ? { ...old, requests: data.requests } : old));
+          setRegister(data);
+        })
+        .catch((e) => {
+          if (live) setError(e.message);
+        })
+        .finally(() => {
+          if (live) setRegisterLoading(false);
+        });
+    }, 150);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [w?.me.id, actor, view, queryParams, reloadKey]);
+  useEffect(() => {
+    if (!selected || !w) {
+      setDetail(null);
+      return;
+    }
+    let live = true;
+    request(`/api/requests/${selected}`)
+      .then((data) => {
+        if (!live) return;
+        setDetail(data.purchase);
+        setW((old) => (old ? { ...old, audit: data.audit } : old));
+      })
+      .catch((e) => {
+        if (live) {
+          setSelected(null);
+          setError(e.message);
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, [selected, actor, reloadKey, w?.me.id]);
+  const filtered = w?.requests ?? [];
+  const visible = filtered;
+  const pages = register.pages;
+  const currentPage = register.page;
+  const active = detail?.id === selected ? detail : undefined;
+  const order = orderId
+    ? detail?.id === orderId
+      ? detail
+      : w?.requests.find((p) => p.id === orderId)
+    : undefined;
+  const inboxCount = register.summary.approvals ?? 0;
+  const overdueCount = register.summary.overdue ?? 0;
   const invalidRange = Boolean(
     filters.from && filters.to && filters.from > filters.to,
   );
   const tableView = ["requests", "approvals", "history"].includes(view);
   const navigate = (next: string) => {
     setView(next);
-    setFilters({ ...DEFAULT_FILTERS, view: next });
+    setFilters({
+      ...DEFAULT_FILTERS,
+      view: next,
+      ...(next === "history"
+        ? { dateField: "orderedAt", sortField: "orderedAt" }
+        : {}),
+    });
     setPage(1);
   };
   const sort = (field: SortField) =>
@@ -1438,15 +1642,18 @@ export default function PurchasingApp() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, version: p.version, ...fields }),
       });
+      if (selected === p.id) setDetail(data);
       await refresh();
       setToast(
         action === "approve"
           ? "Approval saved with date and time."
           : action === "reject"
             ? "Rejection reason saved."
-            : action === "resubmit"
-              ? "Revised proposal submitted for approval."
-              : "Order details saved.",
+            : action === "withdraw"
+              ? "Request withdrawn. Its history has been retained."
+              : action === "resubmit"
+                ? "Revised proposal submitted for approval."
+                : "Order details saved.",
       );
       return data;
     } finally {
@@ -1482,9 +1689,33 @@ export default function PurchasingApp() {
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
-  const exportData = () => {
+  const exportData = async () => {
     if (!w) return;
     try {
+      if (tableView) {
+        setExporting(true);
+        const response = await fetch(`/api/register/export?${queryParams}`, {
+          headers: actor ? { "x-demo-member": actor } : {},
+        });
+        if (!response.ok) {
+          const failure = (await response.json()) as {
+            error?: string;
+            code?: string;
+          };
+          if (["SESSION_REQUIRED", "MFA_REQUIRED"].includes(failure.code ?? ""))
+            window.dispatchEvent(new Event("fuji-security-required"));
+          throw new Error(failure.error || "Export could not be completed.");
+        }
+        download(
+          await response.blob(),
+          `fuji-${view}-${today}.xlsx`,
+          XLSX_MIME,
+        );
+        setToast(
+          `${response.headers.get("X-Export-Count") ?? register.total} requests exported to Excel.`,
+        );
+        return;
+      }
       const sheets: ExcelSheet[] =
         view === "policy"
           ? [
@@ -1533,20 +1764,15 @@ export default function PurchasingApp() {
       );
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setExporting(false);
     }
   };
   const setPeriod = (period: string) => {
-    if (!period || period === "all") return patchFilters({ from: "", to: "" });
-    const anchor = new Date(`${today}T12:00:00Z`);
-    const start =
-      period === "month"
-        ? `${today.slice(0, 7)}-01`
-        : period === "year"
-          ? `${today.slice(0, 4)}-01-01`
-          : new Date(anchor.getTime() - (Number(period) - 1) * 86400000)
-              .toISOString()
-              .slice(0, 10);
-    patchFilters({ from: start, to: today });
+    patchFilters({
+      ...periodDates(period as DatePeriod, today),
+      period: period as DatePeriod,
+    });
   };
   return (
     <div className="app-shell register-shell">
@@ -1569,6 +1795,19 @@ export default function PurchasingApp() {
             </span>
           </a>
           <div className="register-account">
+            {w && hasRole(w.me, "admin") && !w.me.demo && (
+              <button className="btn" onClick={() => setOperationsOpen(true)}>
+                <ShieldCheck size={16} />
+                Workspace tools
+              </button>
+            )}
+            <a
+              className="text-btn"
+              href="/signout-with-chatgpt?return_to=/"
+              target="_top"
+            >
+              Sign out
+            </a>
             <span className="user-avatar">
               {initials(w?.me.name ?? "Fuji")}
             </span>
@@ -1580,6 +1819,7 @@ export default function PurchasingApp() {
                 disabled={!w?.owner}
                 onChange={(e) => {
                   setActor(e.target.value);
+                  setOperationsOpen(false);
                   setForm(null);
                   setOrderId(null);
                 }}
@@ -1670,10 +1910,11 @@ export default function PurchasingApp() {
                 <button
                   className="btn export-btn"
                   onClick={exportData}
-                  disabled={invalidRange && tableView}
+                  disabled={(invalidRange && tableView) || exporting}
                 >
                   <ArrowDownToLine size={17} />
-                  Export data <span className="file-type">.xlsx</span>
+                  {exporting ? "Exporting…" : "Export data"}{" "}
+                  <span className="file-type">.xlsx</span>
                 </button>
                 {tableView && (
                   <button
@@ -1702,13 +1943,10 @@ export default function PurchasingApp() {
               <>
                 <div className="register-summary" aria-label="Workspace totals">
                   <span>
-                    <strong>{w.requests.length}</strong> requests
+                    <strong>{register.summary.total}</strong> requests
                   </span>
                   <span>
-                    <strong>
-                      {w.requests.filter((p) => p.status === "Pending").length}
-                    </strong>{" "}
-                    pending
+                    <strong>{register.summary.pending}</strong> pending
                   </span>
                   <button
                     className={filters.overdueOnly ? "active" : ""}
@@ -1720,10 +1958,7 @@ export default function PurchasingApp() {
                     <strong>{overdueCount}</strong> overdue
                   </button>
                   <span className="summary-value">
-                    Filtered value{" "}
-                    <strong>
-                      {money(filtered.reduce((sum, p) => sum + p.total, 0))}
-                    </strong>
+                    Filtered value <strong>{money(register.value)}</strong>
                   </span>
                 </div>
                 <section
@@ -1751,34 +1986,43 @@ export default function PurchasingApp() {
                         </button>
                       )}
                     </div>
-                    <label>
-                      <span>Status</span>
-                      <select
-                        value={filters.status}
-                        onChange={(e) =>
-                          patchFilters({ status: e.target.value })
-                        }
-                      >
-                        <option value="">All statuses</option>
-                        {["Pending", "Approved", "Rejected"].map((s) => (
-                          <option key={s}>{s}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      <span>Department</span>
-                      <select
-                        value={filters.department}
-                        onChange={(e) =>
-                          patchFilters({ department: e.target.value })
-                        }
-                      >
-                        <option value="">All departments</option>
-                        {DEPARTMENTS.map((d) => (
-                          <option key={d}>{d}</option>
-                        ))}
-                      </select>
-                    </label>
+                    {view !== "approvals" && (
+                      <label>
+                        <span>Status</span>
+                        <select
+                          value={filters.status}
+                          onChange={(e) =>
+                            patchFilters({ status: e.target.value })
+                          }
+                        >
+                          <option value="">All statuses</option>
+                          {[
+                            "Pending",
+                            "Approved",
+                            "Rejected",
+                            ...(view === "history" ? [] : ["Withdrawn"]),
+                          ].map((s) => (
+                            <option key={s}>{s}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
+                    {register.departments.length > 1 && (
+                      <label>
+                        <span>Department</span>
+                        <select
+                          value={filters.department}
+                          onChange={(e) =>
+                            patchFilters({ department: e.target.value })
+                          }
+                        >
+                          <option value="">All departments</option>
+                          {register.departments.map((d) => (
+                            <option key={d}>{d}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     <label>
                       <span>Priority</span>
                       <select
@@ -1793,24 +2037,30 @@ export default function PurchasingApp() {
                         ))}
                       </select>
                     </label>
-                    <label>
-                      <span>Order stage</span>
-                      <select
-                        value={filters.fulfillment}
-                        onChange={(e) =>
-                          patchFilters({ fulfillment: e.target.value })
-                        }
-                      >
-                        <option value="">All stages</option>
-                        {["Not ordered", "Ordered", "Received"].map((s) => (
-                          <option key={s}>{s}</option>
-                        ))}
-                      </select>
-                    </label>
+                    {view !== "approvals" && (
+                      <label>
+                        <span>Order stage</span>
+                        <select
+                          value={filters.fulfillment}
+                          onChange={(e) =>
+                            patchFilters({ fulfillment: e.target.value })
+                          }
+                        >
+                          <option value="">All stages</option>
+                          {[
+                            ...(view === "history" ? [] : ["Not ordered"]),
+                            "Ordered",
+                            "Received",
+                          ].map((s) => (
+                            <option key={s}>{s}</option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                   </div>
                   <div className="register-date-filters">
                     <label>
-                      <span>Date field</span>
+                      <span>Filter date</span>
                       <select
                         value={filters.dateField}
                         onChange={(e) =>
@@ -1819,11 +2069,17 @@ export default function PurchasingApp() {
                           })
                         }
                       >
-                        {Object.entries(DATE_FIELDS).map(([id, name]) => (
-                          <option key={id} value={id}>
-                            {name}
-                          </option>
-                        ))}
+                        {Object.entries(DATE_FIELDS)
+                          .filter(
+                            ([id]) =>
+                              view !== "approvals" ||
+                              ["submittedAt", "neededBy"].includes(id),
+                          )
+                          .map(([id, name]) => (
+                            <option key={id} value={id}>
+                              {name}
+                            </option>
+                          ))}
                       </select>
                     </label>
                     <label>
@@ -1832,7 +2088,12 @@ export default function PurchasingApp() {
                         type="date"
                         value={filters.from}
                         aria-invalid={invalidRange}
-                        onChange={(e) => patchFilters({ from: e.target.value })}
+                        onChange={(e) =>
+                          patchFilters({
+                            from: e.target.value,
+                            period: "custom",
+                          })
+                        }
                       />
                     </label>
                     <label>
@@ -1841,19 +2102,19 @@ export default function PurchasingApp() {
                         type="date"
                         value={filters.to}
                         aria-invalid={invalidRange}
-                        onChange={(e) => patchFilters({ to: e.target.value })}
+                        onChange={(e) =>
+                          patchFilters({ to: e.target.value, period: "custom" })
+                        }
                       />
                     </label>
                     <label>
                       <span>Date range</span>
                       <select
                         aria-label="Choose date range"
-                        value=""
+                        value={periodSelection(filters, today)}
                         onChange={(e) => setPeriod(e.target.value)}
                       >
-                        <option value="" disabled>
-                          Choose range…
-                        </option>
+                        <option value="custom">Custom dates</option>
                         <option value="7">Last 7 days</option>
                         <option value="30">Last 30 days</option>
                         <option value="month">This month</option>
@@ -1871,15 +2132,23 @@ export default function PurchasingApp() {
                           })
                         }
                       >
-                        {Object.entries(DATE_FIELDS).map(([id, name]) => (
-                          <option key={id} value={id}>
-                            {name}
-                          </option>
-                        ))}
-                        <option value="number">Request number</option>
-                        <option value="total">Amount</option>
-                        <option value="priority">Priority</option>
-                        <option value="supplier">Supplier</option>
+                        {Object.entries(SORT_FIELDS)
+                          .filter(
+                            ([id]) =>
+                              view !== "approvals" ||
+                              ![
+                                "status",
+                                "approvedAt",
+                                "orderedAt",
+                                "expectedAt",
+                                "receivedAt",
+                              ].includes(id),
+                          )
+                          .map(([id, name]) => (
+                            <option key={id} value={id}>
+                              {name}
+                            </option>
+                          ))}
                       </select>
                     </label>
                     <button
@@ -1914,6 +2183,7 @@ export default function PurchasingApp() {
                   )}
                   <div
                     className="register-grid-wrap"
+                    aria-busy={registerLoading}
                     tabIndex={0}
                     role="region"
                     aria-label="Purchase requests. Scroll horizontally for more columns."
@@ -1936,7 +2206,11 @@ export default function PurchasingApp() {
                           {sortHeading("Priority", "priority")}
                           {sortHeading("Submitted", "submittedAt")}
                           {sortHeading("Needed by", "neededBy")}
-                          {sortHeading("Status", "status")}
+                          {view === "approvals" ? (
+                            <th scope="col">Status</th>
+                          ) : (
+                            sortHeading("Status", "status")
+                          )}
                           <th scope="col">Order / PO</th>
                           <th className="open-col">
                             <span className="sr-only">Open request</span>
@@ -2006,9 +2280,11 @@ export default function PurchasingApp() {
                       <div className="empty">
                         <Search size={27} />
                         <h3>
-                          {view === "approvals"
-                            ? "No requests awaiting your approval"
-                            : "No requests match these filters"}
+                          {registerLoading
+                            ? "Loading purchases…"
+                            : view === "approvals"
+                              ? "No requests awaiting your approval"
+                              : "No requests match these filters"}
                         </h3>
                         <p>
                           {invalidRange
@@ -2020,9 +2296,10 @@ export default function PurchasingApp() {
                   </div>
                   <div className="register-pagination">
                     <span>
-                      {filtered.length ? (currentPage - 1) * pageSize + 1 : 0}–
-                      {Math.min(currentPage * pageSize, filtered.length)} of{" "}
-                      {filtered.length} requests
+                      {register.total ? (currentPage - 1) * pageSize + 1 : 0}–
+                      {Math.min(currentPage * pageSize, register.total)} of{" "}
+                      {register.total} requests
+                      {registerLoading ? " · Updating…" : ""}
                     </span>
                     <label>
                       Rows{" "}
@@ -2130,6 +2407,15 @@ export default function PurchasingApp() {
             <X size={15} />
           </button>
         </div>
+      )}
+      {operationsOpen && w && hasRole(w.me, "admin") && !w.me.demo && (
+        <Modal
+          title="Backups and monitoring"
+          wide
+          onClose={() => setOperationsOpen(false)}
+        >
+          <OperationsPanel request={request} onChanged={refresh} />
+        </Modal>
       )}
       {form && w && (
         <RequestForm

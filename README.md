@@ -1,49 +1,53 @@
 # Fuji Purchasing Register
 
-Purchase requests, dated approvals, purchase orders, and delivery tracking in a full-width spreadsheet interface.
+Version 3 adds request withdrawal, final invoice variance, account protection, backup and restore, protected audit history, and server-side register filtering.
 
-## Use either version
+## Isolated versions
 
-| Version | GitHub branch | App |
-| --- | --- | --- |
-| Original workspace | `main` | https://fuji-purchasing-hub-team2.flowyrice1.chatgpt.site |
-| Purchasing register | `spreadsheet-interface` | https://fuji-purchasing-register.flowyrice1.chatgpt.site |
+| Version                 | Branch                    | Hosted app                                                |
+| ----------------------- | ------------------------- | --------------------------------------------------------- |
+| Original workspace      | `main`                    | https://fuji-purchasing-hub-team2.flowyrice1.chatgpt.site |
+| Spreadsheet interface   | `spreadsheet-interface`   | https://fuji-purchasing-register.flowyrice1.chatgpt.site  |
+| Requirements completion | `requirements-completion` | https://fuji-purchasing-complete.flowyrice1.chatgpt.site  |
 
-The register is a separate Site with its own database and attachments. Saving a request in one version does not update the other. The original branch and publication are preserved.
+The third app has a separate Site identity, D1 database and R2 bucket. The other branches and publications remain unchanged. Its local database uses `.wrangler/requirements-v3`, separate from the earlier versions.
 
-## Interface and exports
+The remote `requirements-completion` branch must be created by an account with repository write access. A local branch or the hosted source repository does not prove that GitHub accepted a push.
 
-- Top tabs for Purchase requests, Approvals, Purchase history, Purchasing policy, and People & access.
-- A full-width grid with larger request text, sortable headings, and 25, 50, or 100 rows per page.
-- Search requests, items, parts, suppliers, quotes, requesters, and PO numbers.
-- Filter by department, status, order stage, and Low / Medium / High priority.
-- Inclusive From / Through filters for submitted, needed-by, approved, ordered, expected, and received dates. Presets include the last 7 or 30 days, current month, and current year.
-- Overdue requests appear in red when their needed-by date is before today and they remain unreceived. Rejected requests are excluded. Dates use America/New_York.
-- Every tab has an Export data button that downloads a native `.xlsx` workbook.
+## Purchasing
 
-Request exports follow the current tab, filters, and sort order across all pages. The workbook includes Requests, Line items, Approvals, Activity, and Export details. Currency and dates retain native Excel types. Tables support filtering and pivot analysis, headings and identifiers are frozen, and overdue formatting recalculates when opened.
+- Full-width spreadsheet interface, top tabs, larger request text and Low / Medium / High priorities.
+- Required proposal fields, line items, supplier contacts and quotes, validated amounts, and department-based approval routes.
+- Dated decisions, emergency follow-up, rejection reasons, retained revisions, private attachments, reordering and Accounting-only PO/tracking fields.
+- Requesters can withdraw Pending proposals before ordering. Withdrawal blocks later approvals and retains history.
+- Accounting can record the final invoice amount, including zero. Details and Excel exports show its dollar and percentage variance from the approved total.
+- Every purchase mutation records the user, time and old/new values. Database triggers reject updates or deletion of audit history.
 
-Use Requests for complete request totals. Line items contains individual line totals, excluding request-level freight and tax. User text is exported as literal strings and cannot execute spreadsheet formulas.
+## Register and exports
 
-## Purchase workflow
+Filters, sorting, paging, access checks and full-result exports run on the server. Only the selected page and an opened request's history are sent to the browser. SQL indexes avoid downloading the entire dataset for each user.
 
-The forms retain department, needed-by date, item descriptions, part numbers, quantities, prices, freight, tax, business explanations, suppliers, contacts, quote numbers, competitive quotes, and project managers.
+The date shortcut shows the selected period or Custom dates. Every sortable column has a matching sort-menu option. Approvals hides its redundant status and order-stage filters. Purchase history omits Not ordered. A single available department needs no department filter. Filtering dates and sorting dates remain independent controls.
 
-Server-enforced approval routes, emergency handling, rejection reasons, revisions, attachments, and dated history remain available. Accounting records PO numbers, account numbers, purchaser initials, order dates, shipment tracking, receipt dates, and invoice dates.
+All tabs retain Export data in `.xlsx` format. Request exports include all matching pages in the current sort order. Values keep native numeric/date types, and user text remains literal. Withdrawn, rejected and received requests are excluded from overdue highlighting. The application uses Eastern time for business dates.
 
-The owner can use Workspace role to review the built-in employee, manager, and Accounting workflows. Role switching remains owner-only. Real users require Site access and a matching membership under People & access.
+## Account protection
 
-## Security
+Hosted sign-in remains with Sites. The app adds a server-checked, 15-minute idle authorization session and requires an authenticator for approvers, Accounting and administrators. Setup shows single-use recovery codes once. Authenticator secrets use AES-GCM encryption with a runtime key, recovery codes are hashed, attempts are limited and used TOTP codes cannot be replayed. One minute before idle expiration, the app warns the user and offers Stay signed in. Expired sessions cannot access purchasing APIs.
 
-Production requests use HTTPS enforcement and browser transport-security headers.
-Purchasing responses and attachments use private, nonpersistent cache policies.
-Cloudflare provides automatic encryption at rest for the hosted D1 database and
-R2 files. See [NFR09 protection and verification](docs/security.md), including the
-separate implementation work still required for backup and recovery under NFR06.
+Every real privileged user must enroll their own authenticator. The workspace owner cannot use demo switching to bypass that check. See [security](docs/security.md).
 
-## Development
+## Backups and operations
 
-Use Node.js 24 or newer and pnpm 11.25.0.
+Workspace tools provides manual backups, checksum verification, stored-backup discovery, confirmed restoration, and monitoring status. Backups include purchases, audit history, attachments and a directory of member identities. Completed snapshots remain in private R2 storage for 30 days. Signed manifests permit discovery after loss of the D1 backup catalog. Restoration preserves current account security and roles. Missing member identities return inactive, requiring an owner's access review.
+
+A separate scheduled Worker supplies hourly backups, 60-second checks and support alerts. It can alert while the app is down. **This Worker, its KV namespace, private-Site service access and alert destination require deployment/configuration in the operating Cloudflare account.** The app accurately shows Not connected until callbacks arrive. The source does not claim that these schedules or a 99.9% monthly availability guarantee are already active.
+
+See [operations setup and recovery](docs/operations.md) and the complete [requirements status](docs/requirements.md).
+
+## Development and Codespaces
+
+Use Node 24 or newer and pnpm 11.25.0:
 
 ```sh
 pnpm install --frozen-lockfile
@@ -51,28 +55,28 @@ pnpm db:local
 pnpm dev
 ```
 
-The portable URL is normally `http://localhost:5173`. The starter provides local sign-in on loopback hosts. Hosted sign-in is platform managed. Browser-based Codespaces requires forwarded-host development authentication configuration.
+The dev command creates missing local secrets in ignored `.dev.vars`, preserving existing keys. Never commit that file. Keep those keys to reopen authenticator secrets and signed local backups. Hosted runtime secrets are configured separately.
 
 ```sh
 pnpm test
 pnpm typecheck
+pnpm benchmark
 pnpm build
 ```
 
-Local and hosted records are separate. `pnpm db:local` safely applies pending migrations. The priority migration converts older Normal records to Medium and Rush records to High, including prior-revision snapshots. New requests accept only Low, Medium, or High.
-
-The reproducible seed dataset is in `data/sample-requests.json`. Source provenance remains in `docs/requirements.md`. User-facing school-project notes and sample-data banners are removed.
+The benchmark uses the real API handlers with 10,000 requests and 25 concurrent callers against a local SQLite D1 adapter. Hosted latency, capacity and monthly availability require production measurement. Browser QA needs the managed preview service, which may be unavailable in the authoring environment.
 
 ## Source map
 
-- `app/components/PurchasingApp.tsx`: register, tabs, purchase forms, reviews, orders, and members.
-- `app/register.css`: spreadsheet interface and responsive styles.
-- `lib/purchasing/register.ts`: filtering, sorting, and overdue classification.
-- `lib/purchasing/xlsx.ts`: native Excel export.
-- `lib/purchasing/domain.ts`: validation and purchasing rules.
-- `lib/purchasing/server.ts`: identity, persistence, scoped records, and audit writes.
-- `lib/purchasing/security.ts`: HTTPS enforcement and sensitive-response protection.
-- `drizzle/`: schema migrations and priority conversion.
-- `tests/`: business, API, date, migration, and workbook tests.
+- `app/components/PurchasingApp.tsx`: register and purchasing flows.
+- `app/components/SessionGuard.tsx`: MFA enrollment/challenge and idle warning.
+- `app/components/OperationsPanel.tsx`: backup, restore and monitoring tools.
+- `lib/purchasing/register-server.ts`: indexed server queries and access scope.
+- `lib/purchasing/domain.ts`: purchasing validation, withdrawal and invoice calculations.
+- `lib/purchasing/auth-security.ts`: authenticator cryptography and idle authorization.
+- `lib/purchasing/operations.ts`: staged backups, signed manifests and atomic restoration.
+- `lib/purchasing/monitoring.ts`: check history, coverage and operation alerts.
+- `operations/worker.ts`: independent minute-by-minute monitor and backup runner.
+- `drizzle/`: append-only migration history. Run pending migrations before starting this version.
 
-Sites/Vinext, D1, and R2 integrations are retained. Credentials, runtime state, original source PDFs, and signatures are excluded from Git.
+No live database, uploaded source form, signature, credential or runtime secret belongs in Git.
