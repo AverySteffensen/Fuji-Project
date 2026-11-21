@@ -1,63 +1,62 @@
-# Architecture and data design
+# App architecture
 
-The app is a React/Vinext application deployed as a Cloudflare Worker through Sites. The platform supplies ChatGPT identity and private audience enforcement. The application adds server-side member roles and record-level permissions. D1 stores purchases and audit history; R2 stores private attachments.
+Fuji Purchasing Register is a React application built with Vinext. Sites hosts it as a Cloudflare Worker and supplies sign-in. The app uses D1 for purchasing records and R2 for private files and backups.
 
 ```mermaid
 flowchart TD
-    A[Signed-in visitor] --> B[Private Sites access]
-    B --> C[App and protected API]
-    C --> D[Identity and role checks]
-    D --> E[Purchasing business rules]
-    E --> F[(D1 records and audit)]
-    E --> G[(R2 attachments)]
-    C --> H[Scoped XLSX exports]
+    A["Signed-in visitor"] --> B["Purchasing API"]
+    B --> C["Role and record checks"]
+    C --> D["Purchase and approval rules"]
+    C --> E["Filtered Excel export"]
+    D --> F["D1 records and audit history"]
+    D --> G["R2 attachments and backups"]
+    E --> F
+    H["Daily backup job"] --> I["Backup-only service endpoint"]
+    I --> F
+    I --> G
 ```
 
-## Data model
+## Storage
 
-| Table               | Purpose                                                                                             |
-| ------------------- | --------------------------------------------------------------------------------------------------- |
-| `app_settings`      | Owner's stable Site user ID and one-time dataset marker                                             |
-| `members`           | Stable member ID, unique normalized email, bound Site user ID, roles and supervisor departments     |
-| `purchase_requests` | UUID, authoritative JSON document, version number and last-update timestamp                         |
-| `audit_events`      | Append-only UUID, proposal ID, dated event document and optional complete prior-version snapshot    |
-| `attachments`       | UUID, owning proposal, safe filename, allowed media type and size; contents are keyed by UUID in R2 |
+| D1 table | Purpose |
+| --- | --- |
+| `app_settings` | Stores the owner’s Site ID, initialization markers, operation locks and service check-ins. |
+| `members` | Stores each member’s stable ID, normalized email, linked Site identity, roles, active status and supervisor departments. |
+| `purchase_requests` | Stores the purchase document, record version and last update. A new submission uses a requester-specific ID derived from the draft’s submission key so a retry can return the same record. |
+| `request_index` | Stores fields used to scope, filter and sort register queries. The register retrieves one page at a time. |
+| `audit_events` | Stores dated purchase changes and decisions, including prior proposal snapshots on resubmission. |
+| `attachments` | Associates each file with its proposal and records the file name, type, size and optional storage key. R2 holds the contents. Newly uploaded files use the attachment ID as the object key. Restored files use a new R2 object key. |
+| `backup_runs`, `backup_rows` | Track backup, verification and restore jobs. Temporary rows hold a consistent copy of the data being processed. |
+| `health_checks`, `operation_alerts` | Store observations and alert delivery status when the independent monitoring service is connected. |
 
-Nested items, comparative quotes, approvals, order details, and attachment references live in the authoritative request JSON. The version column enables atomic optimistic writes. A separate register index supports scoped server queries and pagination while retaining the authoritative documents.
+The purchase document holds line items, competing quotes, approval steps, order details and file references. Earlier session and authenticator tables remain in the schema for compatibility. Current sign-in uses the hosted identity.
 
-All IDs used in SQL are bound parameters. Request ownership, totals, decisions and timestamps are assigned or validated on the server. The UI's enabled/disabled state is a convenience, not an authorization boundary.
+## Identity and record access
 
-## Identity and permissions
+The first authorized visitor to a new private workspace becomes its owner. The app matches a new member’s verified email to the entry the owner created and binds it to the member’s Site identity. Role changes preserve that identity and the member’s purchase history. App membership and Site access are separate controls. The hosting audience determines who can visit.
 
-The owner-private hosting boundary protects first-use ownership registration. The first signed-in authorized visitor is recorded as owner. The owner can configure operational members. A new member first matches their verified sign-in email; that membership then binds to the stable Site user ID. Subsequent role edits preserve the ID and request ownership.
+An employee can see their requests. Supervisors have access to assigned departments, while Accounting and senior approval roles have wider visibility. A decision also requires the correct role for the current step. Only the owner can switch to a demo persona, and the server restricts each persona to sample records.
 
-Owner-only demo switching is verified on the server. `x-demo-member` cannot change the authenticated visitor or grant an ordinary member a demo role. Demo actors are additionally restricted to sample records. Workspace membership and hosting audience are separate: adding a member in the app does not send an invitation or change who can visit the Site.
+## Consistent writes
 
-## Consistency
-
-- Updates specify the last observed version and compare it again in the SQL update.
-- D1 batches atomically update the document and insert its audit event.
-- Audit insertion is conditional on the update's unique mutation ID. A losing concurrent write produces neither a changed proposal nor a spurious event.
-- Attachment metadata joins the same conditional batch. A failed database write cleans up its new R2 object.
-- Resubmission stores the entire previous proposal in an audit event before resetting approvals for the new revision.
-- Schema migrations contain no seed records. Dataset initialization is idempotent and never deletes existing proposals.
+- Submission stores a request, its register entry and its audit event together. A retry with the same requester, draft key and content returns that request.
+- Updates carry the record version the user last saw. If another user has already changed it, the server rejects the stale update. Only the successful change adds its audit event.
+- An attachment upload writes the bytes to R2, then commits metadata and the request update together in D1. If the transaction fails, the app deletes the newly uploaded object.
+- Resubmission saves the rejected revision and its approval route in the audit history, then starts the next revision under the original request number.
+- The first workspace initialization adds fictional sample records. Later initialization preserves existing requests.
 
 ## Dates, exports and files
 
-Audit timestamps are ISO UTC instants; the UI displays Eastern time. Order, needed-by, receipt and invoice dates are calendar dates. Date comparisons use `America/New_York`, including around UTC midnight.
+The app stores audit timestamps as UTC instants and displays them in Eastern time. Order, needed-by, receipt and invoice-forwarded dates are calendar dates. The register evaluates date ranges and overdue status using `America/New_York`.
 
-Exports are modern XLSX workbooks with typed dates and money. User strings remain literal spreadsheet text. Register exports query all matching authorized rows on the server, preserving the selected order across pages. They include invoice variance and audit changes. Withdrawn, rejected and received requests do not receive overdue formatting.
+The Excel export retrieves all matching authorized requests in the selected sort order, across pages, up to 25,000 requests per file. Dates and amounts use spreadsheet date and numeric cells. User-entered text stays literal. Overdue formatting excludes received, rejected and withdrawn requests. Staff enter shipping details manually and record purchase orders placed through Fuji’s existing process.
 
-File uploads accept PDF, JPEG, PNG and text up to 10 MB, with ten files per proposal. Downloads check record access, force an attachment disposition, disable sniffing and avoid public object URLs. No source PDF, signature, access token, local database, or live attachment is committed to GitHub.
+Each proposal can hold up to ten PDF, JPEG, PNG or plain-text files, each up to 10 MB. The requester or Accounting can attach files to an accessible record. Downloads check the viewer’s access to the associated proposal.
 
-## Operational scope
+## Backups and monitoring
 
-The third hosted app is private and persistent, with its own database and files. It retains owner-controlled personas, documented interpretations of the purchasing procedure and manual shipment entry. It is not connected to Fuji's ERP, supplier ordering, carrier feeds, or email. The code does not present saved order records as actual supplier submissions.
+The daily job runs through a dedicated service endpoint that can start or resume a snapshot for the current Eastern calendar date. D1 stages the purchasing records, audit history, attachment metadata and member directory. The app stores signed manifests, snapshot components and attachment copies in R2. A retry for a completed date returns the same snapshot. The owner can verify its contents and download an encrypted archive.
 
-## Version 3 operations
+A restore stages and verifies the backup before replacing purchasing records. The app preserves later audit events, advances record versions and rebuilds the register index. New members recovered from the backup require access review. Existing member privileges stay current.
 
-`request_index` stores authoritative filter/sort/access fields in the same transaction as purchases and audit events. The browser receives a page, while detail history and complete XLSX exports use separately authorized routes.
-
-Hosted identity, active membership and server-side scope authorize requests. Historical app-session and factor tables are retained for migration compatibility. Backups use `backup_runs` plus temporary `backup_rows` for a consistent transactional snapshot. Signed R2 manifests and private file copies survive loss of the D1 catalog. Restoration stages and verifies data, swaps records atomically, preserves audit history and keeps account privileges current.
-
-The independent Worker in `operations/` requires operating-account configuration. It probes every minute, triggers daily backups and forwards alerts. Dashboard coverage and scheduler status distinguish active service from installed code. See `operations.md` and `requirements.md` for verification limits.
+A separate, optional Worker in `operations/` probes availability and sends alerts to a configured support destination. Workspace tools displays the daily backup check-in separately from the independent monitor. See the [operations guide](operations.md) for setup and the [verification record](verification.md) for release evidence.

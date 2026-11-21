@@ -1,17 +1,28 @@
-# Verification record
+# V5 verification record
 
-Verified in the authoring environment on October 23, 2026 (Eastern).
+On November 21, 2026, the hosted V5 release and the GitHub release contained the same application source. All 67 automated checks passed locally. GitHub Actions also passed the tests, TypeScript check, benchmark and production build for the [V5 release commit](https://github.com/AverySteffensen/Fuji-Project/commit/8e15f070b91cd998b3886d2c7f88c341933d2480). [View the workflow run](https://github.com/AverySteffensen/Fuji-Project/actions/runs/44944246692).
 
-- 63 automated checks passed, including the original business/API/HTTPS regressions.
-- TypeScript checks passed.
-- Production build compiled the register/export, security/session/MFA, backup/restore, health and service routes.
-- The current benchmark uses 3,600 records and four concurrent signed-in members. It measures search/filter p95 and the duration of a 1,000-request export through the API handlers with a local SQLite D1 adapter. The November 6 run measured 21 ms search/filter p95 and 331 ms for a 1,000-request XLSX export.
-- Role-by-role query comparisons verify the server index preserves record access, approval queues, combined filters and sort order.
-- Recovery tests create a snapshot with an attachment, change purchasing records, restore the snapshot, retrieve the restored file, retain later audit events and reject stale versions.
-- Damage tests reject corrupted parts and altered signed manifests. Signed manifest discovery recovers missing database catalog metadata.
-- Access tests cover standard hosted identity, continued access with a valid provider session after an obsolete app lease, explicit loss of provider identity, inactive membership and owner-only backup access.
-- Monitor tests simulate an app outage independently, a failed notification delivery, retry and deduplication.
+## Hosted checks
 
-The managed browser preview daemon is unavailable. The register's live browser interactions and real-user MFA enrollment remain unverified in this environment. Hosted latency, actual RPO/RTO, five-minute receipt at the real alert destination and monthly availability require operating-account setup and measurements. The independent operations Worker and alert receiver have not been activated by these local tests.
+| Area | Observed result |
+| --- | --- |
+| Register | The owner opened the spreadsheet-style register and saw sortable columns, filters, the overdue indicator and the Excel export control. The November 6 V4 rehearsal had already taken a sample request through rejection, revision, approval, receipt and export. |
+| Daily backup | On November 21, the service created a snapshot at 3:02 p.m. Eastern. Its recorded expiry was exactly 30 days later. Repeating the call returned the same completed snapshot. |
+| Owner access to the backup | **Verify** completed in the live owner workspace, and **Download backup** delivered the encrypted file to the browser. |
+| Schedule | The daily job was enabled for 3 a.m. Eastern. Its first calendar-triggered run was due November 22. The November 21 check exercised the scheduled service directly. |
 
-The original GitHub branches were inspected at task start. The GitHub connection rejected creation of a new branch with HTTP 403 Resource not accessible by integration. The Codespaces update bundle creates requirements-completion from the verified spreadsheet-interface baseline without changing either existing branch.
+## Automated and local checks
+
+| Area | Coverage |
+| --- | --- |
+| Purchasing | Submission and retry handling, approval thresholds and role order, rejection and revision history, emergency orders, withdrawal, receipt and final invoice variance |
+| Search and Excel | Role-scoped results, sorting, date ranges, pagination, exports across pages, spreadsheet date and number types, and text that begins with a formula character |
+| Sign-in and access | Active membership, request and file permissions, access while a provider session is valid, and loss of access after sign-out |
+| Backup and recovery | One scheduled snapshot per Eastern calendar day, including daylight-saving transitions. Tests cover concurrent calls, interrupted work, retries, expiry, damaged archives, signed-manifest verification and restoration using isolated data. |
+| Independent monitoring | Simulated app outages, failed alert delivery, retries and duplicate-alert handling |
+
+With 3,600 local records and four concurrent callers, the November 21 benchmark measured **18 ms** for search and filtering at the 95th percentile and **362 ms** to export 1,000 requests. It exercised the application’s API handlers against a local SQLite adapter for D1.
+
+## Remaining hosted checks
+
+A representative restore drill still needs to be timed in an isolated environment. A month of operating history is needed to measure backup retention and availability over that period. Other open checks include hosted performance under load, storage settings, delivery to the real support alert destination, keyboard and small-screen usability, and an idle Accounting session through a full shift. The app uses the hosting provider’s sign-in session. See the [requirements register](requirements.md) and [operations guide](operations.md).

@@ -1,53 +1,42 @@
 # Fuji Purchasing Register
 
-Fuji employees can submit purchase proposals, record approvals, track orders and export the register to Excel. The workspace owner can download encrypted backups for Fuji's servers.
+The Fuji Purchasing Register is a spreadsheet-style web app built by East Carolina University’s MIS 4173 Team 2 for Fuji’s internal purchasing workflow. It follows a proposal from the employee’s request through approval, ordering and receipt. Staff can search earlier purchases, reuse a proposal and export the results to Excel.
 
-## Current release
+[Open the hosted V5 app](https://fuji-purchasing-complete.averysteffensen.chatgpt.site) (authorized access required). To try the register with fictional records, follow the local setup below.
 
-The `main` branch contains the current release of the [Fuji Purchasing Register](https://fuji-purchasing-complete.averysteffensen.chatgpt.site). The historical `requirements-completion` branch preserves V3.
+## How the register works
 
-The hosted app stores purchasing records in D1 and files in a private R2 bucket. Local development uses `.wrangler/requirements-v3`.
+| Who | What they can do |
+| --- | --- |
+| Requester | Enter items, quantities, prices, supplier details, priority and a needed-by date. Follow the request, revise it after rejection or withdraw it while it is pending and unordered. |
+| Approver | Review the assigned step, record a dated approval or give a reason for rejection. The purchase type and total determine which approvals are required. |
+| Accounting | Record the purchase order number, order date, shipment tracking, receipt and final invoice. The register shows the difference between the approved total and final invoice. |
+| Workspace owner | Manage member access, switch between fictional users for demonstrations, and verify, download or restore backups. |
 
-## Purchasing
+**Purchase requests**, **Approvals** and **Purchase history** show one request per row. Users can sort the columns, combine filters and spot overdue requests marked in red. An Excel export includes up to 25,000 matching requests across all pages, in the selected order. Separate request and line-item sheets make it possible to build a PivotTable by department, supplier or part. Dates and amounts keep their spreadsheet types.
 
-- Full-width spreadsheet interface, top tabs, larger request text and Low / Medium / High priorities.
-- Required proposal fields, line items, supplier contacts and quotes, validated amounts, and department-based approval routes.
-- Dated decisions, emergency follow-up, rejection reasons, retained revisions, private attachments, reordering and Accounting-only PO/tracking fields.
-- Requesters can withdraw Pending proposals before ordering. Withdrawal blocks later approvals and retains history.
-- Accounting can record the final invoice amount, including zero. Details and Excel exports show its dollar and percentage variance from the approved total.
-- Every purchase mutation records the user, time and old/new values. Database triggers reject updates or deletion of audit history.
+## Run the local demo
 
-## Register and exports
-
-Filters, sorting, paging, access checks and full-result exports run on the server. Only the selected page and an opened request's history are sent to the browser. SQL indexes avoid downloading the entire dataset for each user.
-
-The date shortcut shows the selected period or Custom dates. Every sortable column has a matching sort-menu option. Approvals hides its redundant status and order-stage filters. Purchase history omits Not ordered. A single available department needs no department filter. Filtering dates and sorting dates remain independent controls.
-
-All tabs retain Export data in `.xlsx` format. Request exports include all matching pages in the current sort order. Values keep native numeric/date types, and user text remains literal. Withdrawn, rejected and received requests are excluded from overdue highlighting. The application uses Eastern time for business dates.
-
-## Internal sign-in
-
-Hosted sign-in identifies each user. Active workspace membership and server-side role and record checks control access. Accounting can leave a workstation open while its hosted sign-in is valid. The header includes explicit Sign out. See [security](docs/security.md).
-
-## Backups and operations
-
-Workspace tools provides manual backups, verification, encrypted downloads, stored-backup discovery and confirmed restoration. Snapshots cover purchases, audit history, attachments and a member directory. Completed snapshots stay in private storage for 30 days. Downloaded archives can be stored on Fuji servers and unpacked with the original backup key in an isolated recovery environment.
-
-The daily job is designed to run at 3 a.m. Eastern, including weekends, while the app is closed. Workspace tools shows its last check-in, latest scheduled attempt and last successful scheduled snapshot. The independent uptime monitor has its own check-in, health measurements and support alert destination.
-
-See [operations setup and recovery](docs/operations.md) and the [requirements status](docs/requirements.md).
-
-## Development and Codespaces
-
-Use Node 24 or newer and pnpm 11.25.0:
+Install Git and Node.js 24 or newer. From a terminal, run the following commands. The package manager version matches the one used by this repository’s GitHub Actions workflow.
 
 ```sh
+git clone https://github.com/AverySteffensen/Fuji-Project.git
+cd Fuji-Project
+npm install --global pnpm@11.25.0
 pnpm install --frozen-lockfile
 pnpm db:local
 pnpm dev
 ```
 
-The dev command creates missing local secrets in ignored `.dev.vars`, preserving existing keys. Never commit that file. Keep the backup key to verify and open backups. Hosted runtime secrets are configured separately.
+On the same computer, open [the local register](http://localhost:5173). Local development provides a test sign-in. A new database starts with 64 fictional requests and eight sample users. Use **Workspace role** to try the employee, approver and Accounting views. Local records and files stay in the checkout’s development storage.
+
+## Hosted backups
+
+The hosted app is scheduled to back up daily at **3 a.m. Eastern** and retains completed snapshots for **30 days**. A snapshot covers purchases, approval history, attachments and the member directory. In **Workspace tools**, the owner can see the last successful scheduled backup, verify its contents and download an encrypted copy for Fuji to store separately. The repository also includes an optional uptime monitor that requires its own deployment and alert destination. See [backup and recovery instructions](docs/operations.md).
+
+## Development and project documentation
+
+The app is written primarily in TypeScript and uses React and Vinext. Cloudflare D1 stores purchasing records and Cloudflare R2 stores private files. The local development command creates the backup key and operations token in the ignored `.dev.vars` file. Keep the original backup key to recover archives created with it.
 
 ```sh
 pnpm test
@@ -56,19 +45,11 @@ pnpm benchmark
 pnpm build
 ```
 
-The benchmark uses the real API handlers with 3,600 requests and four concurrent users against a local SQLite D1 adapter. Hosted latency, capacity and monthly availability require production measurement. Browser QA needs the managed preview service, which may be unavailable in the authoring environment.
+| Guide | What it covers |
+| --- | --- |
+| [Requirements](docs/requirements.md) | Purchase approval rules, requirement IDs and outstanding acceptance checks |
+| [Architecture](docs/architecture.md) | Application structure, data storage and request processing |
+| [Access and security](docs/security.md) | Sign-in, member permissions, files and audit history |
+| [Verification record](docs/verification.md) | V5 tests, benchmark results and hosted checks |
 
-## Source map
-
-- `app/components/PurchasingApp.tsx`: register and purchasing flows.
-- `app/components/OperationsPanel.tsx`: backup, restore and monitoring tools.
-- `lib/purchasing/register-server.ts`: indexed server queries and access scope.
-- `lib/purchasing/domain.ts`: purchasing validation, withdrawal and invoice calculations.
-- `lib/purchasing/backup-archive.ts`: authenticated encryption for portable snapshots.
-- `lib/purchasing/operations.ts`: staged backups, signed manifests and atomic restoration.
-- `lib/purchasing/monitoring.ts`: check history, coverage and operation alerts.
-- `scripts/run-daily-backup.mjs` runs the scheduled backup.
-- `operations/worker.ts` monitors availability and delivers alerts.
-- `drizzle/`: append-only migration history. Run pending migrations before starting this version.
-
-No live database, uploaded source form, signature, credential or runtime secret belongs in Git.
+V5 is on `main`. The [V3 branch](https://github.com/AverySteffensen/Fuji-Project/tree/requirements-completion) and the [spreadsheet-interface branch](https://github.com/AverySteffensen/Fuji-Project/tree/spreadsheet-interface) preserve earlier versions.

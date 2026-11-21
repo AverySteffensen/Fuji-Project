@@ -1,19 +1,14 @@
-# Purchasing register revision
+# Spreadsheet interface revision (V2)
 
-The `spreadsheet-interface` branch is based on original `main` commit `5539caff99c138879e9fbccedccfd4a2a139ef62`. The original branch and app remain available. The register has a new hosting identity and separate D1/R2 data.
+The historical [spreadsheet-interface branch](https://github.com/AverySteffensen/Fuji-Project/tree/spreadsheet-interface) records the change from the original sidebar to a tabbed purchasing register. It started from [commit 5539caf](https://github.com/AverySteffensen/Fuji-Project/commit/5539caff99c138879e9fbccedccfd4a2a139ef62) and used its own hosted database and file storage. For current behavior and test results, see the [README](../README.md) and the [V5 verification record](verification.md).
 
-## Behavior
+## Interface changes in V2
 
-Top tabs replace the sidebar. The default view is a full-width purchase register with larger request text. Reports & exports and project/sample notices are removed from the interface. Every retained tab exports a native Excel workbook.
+- The purchase register became the default view, with one row per request and sortable column headings. Top tabs replaced the sidebar. Each retained tab offered an Excel download, and the separate Reports & exports screen was removed.
+- A data migration converted Normal priority to Medium and Rush to High, including priorities saved in earlier revisions. The new priority choices were Low, Medium and High. The approval routes and financial thresholds stayed the same.
+- Date filters included both ends of the selected range. Missing dates sorted last in either direction. The app used Eastern calendar dates and refreshed the business date every minute and when a browser tab became visible. Overdue highlighting began the day after a request was needed and excluded rejected or received purchases. V5 also excludes withdrawn requests.
+- Excel downloads included every matching row in the selected order, with numeric amounts, typed dates, filterable tables, frozen headings and overdue formatting. Text remained literal. The Requests sheet showed each request total once. Line-item totals excluded request-level freight and tax.
 
-Priorities are Low, Medium, and High. A data-only migration converts Normal to Medium and Rush to High, including archived revision snapshots. Approval routes and financial thresholds remain unchanged.
+## Verification at the time
 
-Date ranges are inclusive and use the selected date field. Missing dates sort last in either direction. UTC instants are converted to Eastern calendar dates for comparisons. A request is overdue the day after its needed-by date unless it is rejected or received. The business date refreshes every minute and when the browser tab becomes visible.
-
-Excel exports include all matching rows in the current order. They use typed amounts/dates, filterable tables, banded rows, frozen headings/identifiers, and dynamic overdue formatting. User strings cannot become formulas or external links. Request totals appear once per request. Line-item totals exclude request-level freight and tax.
-
-## Verification
-
-38 automated checks cover the prior domain and API behavior plus priorities, date inclusivity, Eastern midnight boundaries, missing-date sorting, priority order, combined filters, export scope, ZIP checksums, workbook structure, literal-string safety, empty exports, and idempotent priority conversion.
-
-Browser QA is unavailable because the managed Sites preview supervisor mailbox is absent. The available verification includes typed checks, API-handler tests, a production build, local migrations, and independent workbook inspection. Report this limit at handoff.
+The V2 suite contained 38 checks covering the purchase workflow, priority migration, date boundaries, sorting, filtering and workbook output. The review also included type checking, a production build, local migrations and independent workbook inspection. Interactive browser testing was pending at that revision.

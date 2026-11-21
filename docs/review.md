@@ -1,44 +1,39 @@
-# In-depth implementation review
+# Initial implementation review (October 22, 2026)
 
-Reviewed October 22, 2026 against the supplied correspondence, forms, procedure, and the implemented request-to-order workflow.
+This historical review compared the original purchase-request workflow with the client’s correspondence, sample forms and written purchasing procedure. It describes the original CSV export and test suite. For current Excel exports, backup behavior and test results, see the [README](../README.md) and the [V5 verification record](verification.md).
 
 ## Improvements completed during review
 
-| Finding                                                           | Improvement                                                                                                                            |
-| ----------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Sample personas could otherwise reach live proposals              | Server-side sample-only scope; the browser also shows sample labels in every request row                                               |
-| Emergency exception could permit ordering a rejected request      | Rejected emergencies now require revision; a regression test covers the block                                                          |
-| Searches focused on the first item                                | All item descriptions and part numbers, all quote vendors/numbers, department, project manager and business explanation are searchable |
-| Approval dates could drift around UTC midnight                    | Calendar comparisons use Fuji's Eastern business date while retaining UTC audit instants                                               |
-| Role edits could break ownership                                  | Stable member IDs and sign-in bindings survive role changes                                                                            |
-| Sign-in email alone was being reused as the membership match      | Membership binds to the stable Site user ID on first verified sign-in                                                                  |
-| Rejection history needed the original proposal, not just a reason | Complete prior-version snapshots are stored and can be expanded in the activity view                                                   |
-| Concurrent decisions could create ambiguous history               | Conditional transactional updates and mutation-bound audit insertion; a two-writer test proves one winner and one 409                  |
-| Attachment metadata could be written separately from the request  | Metadata, request version and audit event share a conditional D1 transaction; failed writes remove the new R2 object                   |
-| CSV output omitted useful secondary form details                  | Comparative quotes, emergency details, selection notes, contact information, dates, attachments and order notes are included           |
-| Spreadsheet formula injection                                     | Formula-like values are neutralized; quoting, newlines and UTF-8 handling are tested                                                   |
-| Light secondary text was difficult to read                        | Darker text, larger table labels, visible focus states, clear sample badges, and responsive table scrolling                            |
-| Modal Escape handler could retain an outdated busy state          | Close callback now follows the current state; dialogs retain focus handling                                                            |
-| Arbitrary or oversized JSON could reach route logic               | Streaming body limit, object validation and clear 400/413 responses                                                                    |
-| A ready-to-order card could show already ordered proposals        | A separate fulfillment filter now matches the card's label                                                                             |
-| Dataset had only single-item examples                             | Eight multi-item proposals added: 64 requests and 72 purchase lines                                                                    |
-| Local database setup required manual SQL                          | A repeatable migration helper now applies only pending local migrations                                                                |
-| Dense source was difficult for students to review                 | Application source, tests and documentation formatted consistently                                                                     |
+| Finding in the original implementation | Change made on October 22 |
+| --- | --- |
+| Demo users could reach live proposals | Limited demo users to sample records and labeled sample rows. |
+| A rejected emergency proposal could still be ordered | Required revision after rejection and added a test for that case. |
+| Search covered only the first item | Indexed all item descriptions, part numbers, quote vendors and numbers, plus department, project manager and business explanation. |
+| Approval dates could change around UTC midnight | Used Eastern business dates for comparisons and kept UTC timestamps in the audit history. |
+| Editing a role could affect ownership | Kept stable member IDs and sign-in associations through role changes. |
+| Membership matching relied on email | Bound the member record to the stable Site user ID on first verified sign-in. |
+| Rejection history showed only a reason | Saved the previous proposal and made it available from the activity view. |
+| Two reviewers could act at the same time | Tested simultaneous decisions. One change succeeded and created an audit event. The other returned an HTTP 409 conflict. |
+| Attachment metadata and the request could be saved separately | Saved the metadata, request version and audit event together. A failed write removed the newly uploaded R2 object. |
+| The CSV export omitted additional form details | Included competing quotes, emergency details, supplier selection notes, contacts, dates, attachment names and order notes. |
+| User-entered text could be interpreted as a spreadsheet formula | Treated formula-like values as text in CSV output and tested quoting, line breaks and UTF-8. |
+| Secondary text was difficult to read | Darkened text, enlarged table labels, added visible focus states and clarified sample badges. The table could scroll horizontally on narrow screens. |
+| A dialog could use an outdated busy state | Updated the Escape handler to use the current state and retained keyboard focus handling. |
+| Route handlers could receive malformed or oversized JSON | Bounded the request body, validated its structure and returned a 400 or 413 response when appropriate. |
+| The ready-to-order count could include orders already placed | Counted only requests matching that fulfillment stage. |
+| Sample requests contained only one item | Added eight multi-item examples, giving 64 requests and 72 purchase lines. |
+| Local setup required manual SQL | Added a migration command that applied pending migrations. |
+| Dense formatting made the source difficult to review | Formatted the application, tests and documentation consistently. |
 
-## Validation
+## Verification at the time
 
-- 30 automated checks pass: domain rules plus actual API route handlers running against SQLite through a D1-compatible adapter.
-- Tests cover all dollar boundaries, raw materials, supervisor absence, role and record scope, self-approval, rejection, resubmission, full revision snapshots, PO restrictions, emergency ordering, date rules, safe exports, stable membership, attachments, anonymous access, cross-origin writes, malformed/oversized requests, and concurrent writes.
-- TypeScript checking and a production build are required before the final source is published.
-- Initial local database migration applies successfully; repeat execution is checked for idempotence.
-- Source is scanned before publication to exclude credentials, local runtime data, uploaded source PDFs, and original signatures.
+- All 30 automated checks passed against the domain rules and API handlers, using SQLite through a D1-compatible adapter.
+- Coverage included approval thresholds and exceptions, role and record permissions, self-approval, rejection, resubmission, prior revisions, order entry, dates, exports, attachments and concurrent updates.
+- The initial migration ran successfully. Repeating it checked that previously applied migrations were skipped.
+- The release checklist called for type checking, a production build and a source review for credentials, runtime data, source PDFs and signatures.
 
-## Verification limits
+The managed browser preview was unavailable during this review. The handler tests used test identities. Hosted sign-in, cross-device behavior, keyboard navigation and responsive layout still needed browser checks at that point.
 
-The managed browser preview supervisor is unavailable in this workspace (`sites-previewd` mailbox missing). The supported workflow does not allow replacing that infrastructure. Browser interaction, responsive rendering, keyboard behavior, and visual accessibility therefore remain unverified interactively. Automated tests do not claim to replace that review.
+## Purchasing policy assumptions
 
-Hosted authentication, the final hosted D1/R2 resources, and cross-device behavior rely on the Sites platform. API-handler tests exercise application identity and permissions with trusted test identity headers; they do not constitute an end-to-end login test against the hosted platform.
-
-## Business assumptions for Fuji's review
-
-The precise $150 boundary, the middle-tier conjunction, sequential sign-off, cost-inclusive routing, and the one-day emergency deadline are documented in `requirements.md` and exposed in the app's Purchasing policy page. The supplied written procedure is from 2012; its continued applicability is assumed for this course implementation because Chase supplied it as the reference.
+The team used the 2012 purchasing procedure Chase supplied. The [approval policy interpretations](requirements.md#approval-policy) explain the treatment of exactly $150, the middle tier, the sign-off order, the inclusion of freight and tax, and the 24-hour emergency follow-up period. The app displays these rules under **Purchasing policy**.
