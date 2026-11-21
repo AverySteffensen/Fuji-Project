@@ -83,6 +83,10 @@ export type Order = {
   notes: string;
   finalInvoiceAmount?: number | null;
 };
+export type ApprovalRoute = {
+  policyVersion: string;
+  steps: Role[][];
+};
 export type Purchase = {
   id: string;
   number: string;
@@ -110,6 +114,7 @@ export type Purchase = {
   withdrawnAt?: string;
   withdrawalReason?: string;
   approvals: Approval[];
+  approvalRoute?: ApprovalRoute;
   rejectionReason: string;
   submittedAt: string;
   updatedAt: string;
@@ -126,6 +131,7 @@ export type Purchase = {
   attachments: Attachment[];
   order: Order | null;
   sample: boolean;
+  submissionFingerprint?: string;
   referenceInspired?: boolean;
   lastMutationId?: string;
 };

@@ -3,7 +3,6 @@ import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { BusinessError, canView, hasRole } from "./domain";
 import { DEMO_MEMBERS, buildSeed } from "./seed";
 import type { Member, Purchase, Audit } from "./types";
-import { enforceSecurity } from "./auth-security";
 import { indexStatement, rebuildIndex } from "./register-server";
 export const database = () => {
   if (!env.DB)
@@ -82,10 +81,7 @@ export async function initialize(user: {
     await rebuildIndex(db);
   return owner?.value === user.userId;
 }
-export async function context(
-  request: Request,
-  options: { skipSecurity?: boolean } = {},
-) {
+export async function context(request: Request) {
   let user = await getChatGPTUser();
   if (!user && import.meta.env?.DEV)
     user = {
@@ -135,9 +131,6 @@ export async function context(
         403,
       );
   }
-  const principal = me;
-  if (!options.skipSecurity)
-    await enforceSecurity(request, user.userId, principal, database());
   const actor = request.headers.get("x-demo-member");
   if (actor) {
     if (!owner)
@@ -148,15 +141,19 @@ export async function context(
     me = members.find((m) => m.demo && m.id === actor);
     if (!me) throw new BusinessError("Unknown demo persona.");
   }
-  return { me, principal, owner, members, user };
+  return { me, owner, members, user };
 }
-export async function getPurchase(id: string) {
+export async function findPurchase(id: string) {
   const row = await database()
     .prepare("SELECT data FROM purchase_requests WHERE id=?")
     .bind(id)
     .first<{ data: string }>();
-  if (!row) throw new BusinessError("Request not found.", 404);
-  return JSON.parse(row.data) as Purchase;
+  return row ? (JSON.parse(row.data) as Purchase) : null;
+}
+export async function getPurchase(id: string) {
+  const purchase = await findPurchase(id);
+  if (!purchase) throw new BusinessError("Request not found.", 404);
+  return purchase;
 }
 export async function loadWorkspace(request: Request) {
   const ctx = await context(request);
@@ -182,7 +179,10 @@ export async function writePurchase(
   const previous =
     expectedVersion === undefined ? null : await getPurchase(p.id);
   event.changes = Object.keys(p)
-    .filter((field) => !["lastMutationId", "version"].includes(field))
+    .filter(
+      (field) =>
+        !["lastMutationId", "version", "submissionFingerprint"].includes(field),
+    )
     .filter(
       (field) =>
         JSON.stringify(previous?.[field as keyof Purchase] ?? null) !==
@@ -198,7 +198,7 @@ export async function writePurchase(
     const result = await db.batch([
       db
         .prepare(
-          "INSERT INTO purchase_requests(id,data,version,updated_at) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?)",
+          "INSERT INTO purchase_requests(id,data,version,updated_at) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?) ON CONFLICT(id) DO NOTHING",
         )
         .bind(p.id, JSON.stringify(p), p.version, p.updatedAt, Date.now()),
       db
@@ -208,12 +208,15 @@ export async function writePurchase(
         .bind(event.id, p.id, JSON.stringify(event), event.at, p.id, event.id),
       indexStatement(db, p, event.id),
     ]);
-    if (!result[0].meta.changes)
+    if (!result[0].meta.changes) {
+      const existing = await findPurchase(p.id);
+      if (existing) return existing;
       throw new BusinessError(
         "Records are being restored. Try again when restoration finishes.",
         503,
       );
-    return;
+    }
+    return p;
   }
   p.version = expectedVersion + 1;
   const result = await db.batch([
@@ -254,6 +257,7 @@ export async function writePurchase(
       409,
     );
   }
+  return p;
 }
 export function assertSameOrigin(request: Request) {
   const origin = request.headers.get("origin");

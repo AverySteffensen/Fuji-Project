@@ -11,6 +11,10 @@ type Run = {
 };
 type Summary = {
   runs: Run[];
+  lastDailyBackupCheck: string | null;
+  dailyBackupActive: boolean;
+  latestDailyBackup: { at: string; status: string } | null;
+  lastCompletedDailyBackupAt: string | null;
   schedulerActive: boolean;
   lastTick: string | null;
   health: {
@@ -111,28 +115,29 @@ export default function OperationsPanel({ request, onChanged }: Props) {
           <h3>Backup and recovery</h3>
           <p>
             Completed backups retain purchasing records, audit history and
-            attachments for 30 days.
+            attachments for 30 days. Download a protected copy for Fuji server
+            storage.
           </p>
           <dl className="operations-summary">
-            <dt>Hourly service</dt>
-            <dd>{data.schedulerActive ? "Connected" : "Not connected"}</dd>
-            <dt>Latest service check</dt>
-            <dd>{when(data.lastTick)}</dd>
-            <dt>Latest completed backup</dt>
+            <dt>Daily backup service</dt>
             <dd>
-              {when(
-                data.runs.find(
-                  (r) => r.kind === "backup" && r.status === "complete",
-                )?.at,
-              )}
+              {data.dailyBackupActive
+                ? "Checked in within 26 hours"
+                : data.lastDailyBackupCheck
+                  ? "Check-in overdue"
+                  : "Awaiting first check-in"}
             </dd>
+            <dt>Last daily check-in (Eastern)</dt>
+            <dd>{when(data.lastDailyBackupCheck)}</dd>
+            <dt>Latest scheduled attempt</dt>
+            <dd>
+              {data.latestDailyBackup
+                ? `${when(data.latestDailyBackup.at)} · ${data.latestDailyBackup.status}`
+                : "None recorded"}
+            </dd>
+            <dt>Last successful scheduled snapshot (Eastern)</dt>
+            <dd>{when(data.lastCompletedDailyBackupAt)}</dd>
           </dl>
-          {!data.schedulerActive && (
-            <p className="hint">
-              Connect the operations service to enable hourly backups and
-              monitoring while the app is closed. Manual backups work below.
-            </p>
-          )}
           <button
             className="btn primary"
             disabled={busy}
@@ -165,6 +170,24 @@ export default function OperationsPanel({ request, onChanged }: Props) {
             }}
           >
             Find stored backups
+          </button>
+          <button
+            className="btn"
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                setData(await request("/api/operations"));
+                setMessage("Status refreshed.");
+              } catch (e) {
+                setError((e as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Refresh status
           </button>
           <div className="operations-table">
             <table>
@@ -205,6 +228,13 @@ export default function OperationsPanel({ request, onChanged }: Props) {
                         r.status === "complete" &&
                         (r.expiresAt ?? "") > new Date().toISOString() && (
                           <div className="row">
+                            <a
+                              className="text-btn"
+                              href={`/api/operations?download=${encodeURIComponent(r.id)}`}
+                              download
+                            >
+                              Download backup
+                            </a>
                             <button
                               className="text-btn"
                               disabled={busy}
@@ -261,6 +291,16 @@ export default function OperationsPanel({ request, onChanged }: Props) {
           )}
           <h3>Availability and alerts</h3>
           <dl className="operations-summary">
+            <dt>Independent uptime monitor</dt>
+            <dd>
+              {data.schedulerActive
+                ? "Connected"
+                : data.lastTick
+                  ? "Check-in overdue"
+                  : "Awaiting first check-in"}
+            </dd>
+            <dt>Last monitor check-in (Eastern)</dt>
+            <dd>{when(data.lastTick)}</dd>
             <dt>Monthly availability target</dt>
             <dd>99.9%, covering all three shifts</dd>
             <dt>Observed healthy checks</dt>
@@ -275,9 +315,8 @@ export default function OperationsPanel({ request, onChanged }: Props) {
             <dd>{when(data.health.lastCheck)}</dd>
           </dl>
           <p className="hint">
-            The independent monitor checks every 60 seconds and sends outage or
-            backup failure alerts to the configured support destination. A
-            connected monitor and alert destination are required.
+            When configured, the monitor checks health every minute and sends
+            outage and backup failure alerts to the support contact.
           </p>
           {!!data.alerts.length && (
             <ul>

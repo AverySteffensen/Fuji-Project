@@ -9,7 +9,6 @@ try {
 }
 let changed = false;
 for (const name of [
-  "FUJI_MFA_KEY",
   "FUJI_BACKUP_KEY",
   "FUJI_OPERATIONS_TOKEN",
 ]) {

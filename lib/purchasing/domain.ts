@@ -5,6 +5,7 @@ import {
   type Member,
   type Role,
   type Approval,
+  type ApprovalRoute,
   type Order,
 } from "./types.ts";
 export class BusinessError extends Error {
@@ -58,7 +59,16 @@ export const cents = (n: number) =>
   Math.round((n + Number.EPSILON) * 100) / 100;
 export const hasRole = (m: Member, ...roles: Role[]) =>
   roles.some((r) => m.roles.includes(r));
-export function approvalSteps(p: Purchase): Role[][] {
+type ApprovalInputs = Pick<
+  Purchase,
+  "purchaseType" | "total" | "supervisorUnavailable"
+>;
+
+// Keep this policy unchanged for requests saved before route snapshots.
+function approvalRouteV1(p: ApprovalInputs): ApprovalRoute {
+  return { policyVersion: "fuji-v1", steps: approvalStepsV1(p) };
+}
+function approvalStepsV1(p: ApprovalInputs): Role[][] {
   if (p.purchaseType === "Raw materials")
     return [["plantmanager", "controller"]];
   if (p.total <= 150)
@@ -67,6 +77,12 @@ export function approvalSteps(p: Purchase): Role[][] {
     ];
   if (p.total <= 1000) return [["supervisor"], ["controller", "vicepresident"]];
   return [["supervisor"], ["controller"], ["vicepresident"]];
+}
+export function snapshotApprovalRoute(p: ApprovalInputs): ApprovalRoute {
+  return approvalRouteV1(p);
+}
+export function approvalSteps(p: Purchase): Role[][] {
+  return (p.approvalRoute ?? approvalRouteV1(p)).steps;
 }
 export function nextStep(p: Purchase): Role[] {
   return (
@@ -105,7 +121,7 @@ export function canApprove(m: Member, p: Purchase) {
       m.departments.includes(p.department))
   );
 }
-export function sanitizeRequest(input: Record<string, any>): Partial<Purchase> {
+export function sanitizeRequest(input: Record<string, any>) {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new BusinessError("Enter valid proposal fields.");
   if (
@@ -133,10 +149,10 @@ export function sanitizeRequest(input: Record<string, any>): Partial<Purchase> {
   const department = text(input.department);
   if (!DEPARTMENTS.includes(department as any))
     throw new BusinessError("Select a department.");
-  const purchaseType = input.purchaseType;
+  const purchaseType = input.purchaseType as Purchase["purchaseType"];
   if (!["Facilities", "Lease", "Other", "Raw materials"].includes(purchaseType))
     throw new BusinessError("Select a purchase type.");
-  const priority = input.priority;
+  const priority = input.priority as Purchase["priority"];
   if (!PRIORITIES.includes(priority))
     throw new BusinessError("Select Low, Medium, or High priority.");
   const explanation = text(input.explanation);
@@ -210,7 +226,7 @@ export function sanitizeRequest(input: Record<string, any>): Partial<Purchase> {
     verbalApprovedAt: emergency ? verbalApprovedAt : "",
     verbalApproverId: emergency ? text(input.verbalApproverId) : "",
     emergencyReason: emergency ? text(input.emergencyReason) : "",
-  };
+  } satisfies Partial<Purchase>;
 }
 export function approve(
   p: Purchase,
@@ -276,11 +292,13 @@ export function resubmit(
       "Only the requester can revise a rejected proposal.",
       403,
     );
+  const fields = sanitizeRequest(input);
   return {
     ...p,
-    ...sanitizeRequest(input),
+    ...fields,
     status: "Pending",
     approvals: [],
+    approvalRoute: snapshotApprovalRoute(fields),
     approvedAt: "",
     rejectionReason: "",
     revision: p.revision + 1,
@@ -308,6 +326,14 @@ export function saveOrder(
     );
   if (p.status !== "Approved" && !p.emergency)
     throw new BusinessError("Complete all approvals before placing an order.");
+  const finalInvoiceAmount =
+    input.finalInvoiceAmount == null || input.finalInvoiceAmount === ""
+      ? null
+      : cents(num(input.finalInvoiceAmount));
+  if (p.status !== "Approved" && finalInvoiceAmount !== null)
+    throw new BusinessError(
+      "Complete written approval before recording the final invoice.",
+    );
   const poNumber = text(input.poNumber, 100),
     orderedAt = date(input.orderedAt);
   if (!poNumber || !orderedAt)
@@ -344,11 +370,9 @@ export function saveOrder(
     invoiceAt,
     notes: text(input.notes),
     finalInvoiceAmount:
-      input.finalInvoiceAmount === undefined ||
-      input.finalInvoiceAmount === null ||
-      input.finalInvoiceAmount === ""
-        ? null
-        : cents(num(input.finalInvoiceAmount)),
+      p.status === "Approved"
+        ? finalInvoiceAmount
+        : (p.order?.finalInvoiceAmount ?? null),
   };
   return { ...p, order, updatedAt: now };
 }
@@ -375,7 +399,10 @@ export function withdraw(
     updatedAt: now,
   };
 }
-export function invoiceVariance(p: Pick<Purchase, "total" | "order">) {
+export function invoiceVariance(
+  p: Pick<Purchase, "status" | "total" | "order">,
+) {
+  if (p.status !== "Approved") return null;
   const amount = p.order?.finalInvoiceAmount;
   if (amount === undefined || amount === null) return null;
   const amountDifference = cents(amount - p.total);
@@ -549,7 +576,7 @@ export function exportRows(purchases: Purchase[], lineItems = false) {
         ]),
         p.withdrawnAt ?? "",
         p.withdrawalReason ?? "",
-        p.order?.finalInvoiceAmount ?? "",
+        p.status === "Approved" ? (p.order?.finalInvoiceAmount ?? "") : "",
         invoiceVariance(p)?.amountDifference ?? "",
         invoiceVariance(p)?.percentageDifference ?? "",
       ]),

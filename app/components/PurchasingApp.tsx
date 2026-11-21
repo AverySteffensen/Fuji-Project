@@ -50,6 +50,7 @@ import {
   money,
   canApprove,
   approvalSteps,
+  snapshotApprovalRoute,
   nextStep,
   hasRole,
   emergencyDue,
@@ -233,7 +234,7 @@ function RequestForm({
   me: Member;
   members: Member[];
   onClose: () => void;
-  onSave: (v: any) => Promise<void>;
+  onSave: (v: any, submissionKey: string) => Promise<void>;
   busy: boolean;
 }) {
   const [f, setF] = useState<any>(() =>
@@ -246,6 +247,7 @@ function RequestForm({
       : blank(),
   );
   const [error, setError] = useState("");
+  const submissionKey = useRef<string | null>(null);
   const field = (name: string, value: any) =>
     setF((p: any) => ({ ...p, [name]: value }));
   const total =
@@ -264,7 +266,7 @@ function RequestForm({
     e.preventDefault();
     setError("");
     try {
-      await onSave(f);
+      await onSave(f, (submissionKey.current ??= crypto.randomUUID()));
     } catch (e) {
       setError((e as Error).message);
     }
@@ -721,8 +723,10 @@ function RequestForm({
             <div>
               <strong>Your approval route</strong>
               <p>
-                {approvalSteps(preview)
-                  .map((step) => step.map((r) => ROLE_NAMES[r]).join(" or "))
+                {snapshotApprovalRoute(preview)
+                  .steps.map((step) =>
+                    step.map((r) => ROLE_NAMES[r]).join(" or "),
+                  )
                   .join(" → ")}
               </p>
             </div>
@@ -781,6 +785,8 @@ function OrderForm({
     },
   );
   const [error, setError] = useState("");
+  const canRecordInvoice = p.status === "Approved";
+  const variance = invoiceVariance({ ...p, order: o });
   const field = (n: keyof Order, v: string) => setO({ ...o, [n]: v });
   const controls: [keyof Order, string, string, boolean?][] = [
     ["poNumber", "Purchase order number *", "text", true],
@@ -801,7 +807,9 @@ function OrderForm({
           e.preventDefault();
           try {
             setError("");
-            await onSave(o);
+            await onSave(
+              canRecordInvoice ? o : { ...o, finalInvoiceAmount: undefined },
+            );
           } catch (e) {
             setError((e as Error).message);
           }
@@ -814,7 +822,8 @@ function OrderForm({
           {p.emergency && p.status !== "Approved" && (
             <div className="alert warning">
               Emergency order: written approvals are still required by{" "}
-              {fmt(emergencyDue(p), true)}.
+              {fmt(emergencyDue(p), true)}. Final invoice entry opens after
+              approval.
             </div>
           )}
           <div className="form-grid cols-2">
@@ -837,7 +846,8 @@ function OrderForm({
               min="0"
               max="100000000"
               step="0.01"
-              value={o.finalInvoiceAmount ?? ""}
+              disabled={!canRecordInvoice}
+              value={canRecordInvoice ? (o.finalInvoiceAmount ?? "") : ""}
               onChange={(e) =>
                 setO({
                   ...o,
@@ -848,11 +858,14 @@ function OrderForm({
               placeholder="Enter when the final invoice arrives"
             />
           </label>
-          {invoiceVariance({ ...p, order: o }) && (
+          {variance && (
             <p className="hint">
               Approved total {money(p.total)}. Invoice variance{" "}
-              {money(invoiceVariance({ ...p, order: o })!.amountDifference)} (
-              {invoiceVariance({ ...p, order: o })!.percentageDifference}%).
+              {money(variance.amountDifference)}
+              {variance.percentageDifference == null
+                ? " (percentage not applicable)"
+                : ` (${variance.percentageDifference}%)`}
+              .
             </p>
           )}
           <label>
@@ -908,6 +921,7 @@ function RequestDetail({
     [note, setNote] = useState(""),
     [error, setError] = useState("");
   const [withdrawing, setWithdrawing] = useState(false);
+  const variance = invoiceVariance(p);
   const act = async (a: string) => {
     try {
       setError("");
@@ -1175,15 +1189,15 @@ function RequestDetail({
                   <dt>Invoice to Accounting</dt>
                   <dd>{fmt(p.order.invoiceAt)}</dd>
                   <dt>Final invoice amount</dt>
-                  <dd>
-                    {p.order.finalInvoiceAmount == null
-                      ? "Not recorded"
-                      : money(p.order.finalInvoiceAmount)}
-                  </dd>
+                  <dd>{variance ? money(variance.amount) : "Not recorded"}</dd>
                   <dt>Variance from approved total</dt>
                   <dd>
-                    {invoiceVariance(p)
-                      ? `${money(invoiceVariance(p)!.amountDifference)} (${invoiceVariance(p)!.percentageDifference}%)`
+                    {variance
+                      ? `${money(variance.amountDifference)}${
+                          variance.percentageDifference == null
+                            ? " (percentage not applicable)"
+                            : ` (${variance.percentageDifference}%)`
+                        }`
                       : "Not recorded"}
                   </dd>
                 </dl>
@@ -1293,6 +1307,16 @@ function RequestDetail({
                             </p>
                           ))}
                           <p>Rejection: {a.previousVersion.rejectionReason}</p>
+                          <p>
+                            Approval path:{" "}
+                            {approvalSteps(a.previousVersion)
+                              .map((step) =>
+                                step
+                                  .map((role) => ROLE_NAMES[role])
+                                  .join(" or "),
+                              )
+                              .join(" → ")}
+                          </p>
                           {a.previousVersion.approvals.map((decision, i) => (
                             <p key={i}>
                               {ROLE_NAMES[decision.role]}: {decision.actorName}{" "}
@@ -1463,8 +1487,6 @@ export default function PurchasingApp() {
     });
     const data: any = await response.json();
     if (!response.ok) {
-      if (["SESSION_REQUIRED", "MFA_REQUIRED"].includes(data.code))
-        window.dispatchEvent(new Event("fuji-security-required"));
       throw new Error(data.error || "The request could not be completed.");
     }
     return data;
@@ -1660,7 +1682,7 @@ export default function PurchasingApp() {
       setBusy(false);
     }
   };
-  const submit = async (fields: any) => {
+  const submit = async (fields: any, submissionKey: string) => {
     setBusy(true);
     try {
       const saved =
@@ -1668,7 +1690,10 @@ export default function PurchasingApp() {
           ? await act(form.source, "resubmit", { fields })
           : await request("/api/requests", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
+              headers: {
+                "Content-Type": "application/json",
+                "Idempotency-Key": submissionKey,
+              },
               body: JSON.stringify(fields),
             });
       await refresh();
@@ -1700,10 +1725,7 @@ export default function PurchasingApp() {
         if (!response.ok) {
           const failure = (await response.json()) as {
             error?: string;
-            code?: string;
           };
-          if (["SESSION_REQUIRED", "MFA_REQUIRED"].includes(failure.code ?? ""))
-            window.dispatchEvent(new Event("fuji-security-required"));
           throw new Error(failure.error || "Export could not be completed.");
         }
         download(

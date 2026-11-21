@@ -43,6 +43,149 @@ const input = {
     },
   ],
 };
+test("a new draft retries atomically, while a different draft creates a separate request", async () => {
+  await h.identity();
+  const key = crypto.randomUUID();
+  const submit = async (
+    submissionKey: string,
+    actor = "demo-employee",
+    fields = input,
+  ) =>
+    read(
+      await routes.create.POST(
+        req("POST", actor, fields, "/api/requests", submissionKey),
+      ),
+    );
+  assert.equal((await submit("")).status, 400);
+  assert.equal((await submit("invalid-key")).status, 400);
+  const [first, second] = await Promise.all([submit(key), submit(key)]);
+  assert.deepEqual([first.status, second.status].sort(), [200, 201]);
+  assert.equal(first.data.id, second.data.id);
+  assert.equal(first.data.number, second.data.number);
+  const id = first.data.id;
+  assert.equal(
+    sql
+      .prepare("SELECT count(*) AS count FROM audit_events WHERE request_id=?")
+      .get(id)?.count,
+    1,
+  );
+  assert.equal(
+    sql
+      .prepare("SELECT count(*) AS count FROM request_index WHERE id=?")
+      .get(id)?.count,
+    1,
+  );
+  const conflict = await submit(key, "demo-employee", {
+    ...input,
+    supplier: "Different Supplier",
+  });
+  assert.equal(conflict.status, 409);
+  const approved = await routes.update.PATCH(
+    req("PATCH", "demo-supervisor", { action: "approve", version: 1 }),
+    { params: Promise.resolve({ id }) },
+  );
+  assert.equal(approved.status, 200);
+  const retry = await submit(key);
+  assert.equal(retry.status, 200);
+  assert.equal(retry.data.id, id);
+  assert.equal(retry.data.status, "Approved");
+  assert.equal(retry.data.version, 2);
+  assert.equal(
+    sql
+      .prepare("SELECT count(*) AS count FROM audit_events WHERE request_id=?")
+      .get(id)?.count,
+    2,
+  );
+
+  const newDraft = await submit(crypto.randomUUID());
+  assert.equal(newDraft.status, 201);
+  assert.notEqual(newDraft.data.id, id);
+  const otherRequester = await submit(key, "demo-accounting");
+  assert.equal(otherRequester.status, 201);
+  assert.notEqual(otherRequester.data.id, id);
+});
+test("pending emergency orders allow fulfillment updates but reject a final invoice until written approval", async () => {
+  await h.identity();
+  const created = await read(
+    await routes.create.POST(
+      req("POST", "demo-employee", {
+        ...input,
+        emergency: true,
+        emergencyCategory: "Production",
+        emergencyReason: "Test emergency equipment replacement",
+        verbalApproverId: "demo-plant",
+        verbalApprovedAt: now,
+      }),
+    ),
+  );
+  assert.equal(created.status, 201);
+  const id = created.data.id;
+  const params = { params: Promise.resolve({ id }) };
+  const order = { poNumber: "EMERGENCY-TEST", orderedAt: businessDate(now) };
+  const updateOrder = (version: number, details: Record<string, unknown>) =>
+    routes.update.PATCH(
+      req("PATCH", "demo-accounting", {
+        action: "order",
+        version,
+        order: details,
+      }),
+      params,
+    );
+  const early = await read(
+    await updateOrder(1, { ...order, finalInvoiceAmount: 110 }),
+  );
+  assert.equal(early.status, 400);
+  assert.match(early.data.error, /written approval/);
+  assert.equal(
+    sql
+      .prepare("SELECT count(*) AS count FROM audit_events WHERE request_id=?")
+      .get(id)?.count,
+    1,
+  );
+  const pending = await read(
+    await updateOrder(1, { ...order, trackingNumber: "TRACK-EM" }),
+  );
+  assert.equal(pending.status, 200);
+  assert.equal(pending.data.status, "Pending");
+  assert.equal(pending.data.order.trackingNumber, "TRACK-EM");
+  assert.equal(pending.data.order.finalInvoiceAmount, null);
+  assert.equal(
+    (await updateOrder(2, { ...order, finalInvoiceAmount: 0 })).status,
+    400,
+  );
+  const approved = await read(
+    await routes.update.PATCH(
+      req("PATCH", "demo-supervisor", { action: "approve", version: 2 }),
+      params,
+    ),
+  );
+  assert.equal(approved.data.status, "Approved");
+  const invoiced = await read(
+    await updateOrder(3, { ...order, finalInvoiceAmount: 110 }),
+  );
+  assert.equal(invoiced.status, 200);
+  assert.deepEqual(invoiceVariance(invoiced.data), {
+    amount: 110,
+    amountDifference: 10,
+    percentageDifference: 10,
+  });
+
+  const legacy = {
+    ...pending.data,
+    order: { ...pending.data.order, finalInvoiceAmount: 110 },
+  };
+  const accounting = DEMO_MEMBERS.find((m) => m.roles.includes("accounting"))!;
+  const updatedLegacy = saveOrder(
+    legacy,
+    accounting,
+    { ...order, trackingNumber: "TRACK-NEW" },
+    now,
+  );
+  assert.equal(updatedLegacy.order?.finalInvoiceAmount, 110);
+  assert.equal(invoiceVariance(updatedLegacy), null);
+  const [head, values] = exportRows([updatedLegacy]);
+  assert.equal(values[head.indexOf("Final invoice amount")], "");
+});
 test("withdrawal stops approvals, preserves decisions and requires the requester and a Pending unordered proposal", async () => {
   await h.identity();
   const created = (

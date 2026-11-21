@@ -1,7 +1,16 @@
 import { BusinessError } from "./domain.ts";
-import { digest, randomToken } from "./auth-security.ts";
+import { digest, randomToken } from "./crypto.ts";
 import { rebuildIndex } from "./register-server.ts";
 import { env } from "cloudflare:workers";
+import {
+  ARCHIVE_MAGIC,
+  ARCHIVE_SALT_BYTES,
+  MAX_FRAME_BYTES,
+  archiveKey,
+  backupKeyBytes,
+  frameLength,
+  frameParameters,
+} from "./backup-archive.ts";
 type Kind = "requests" | "audit" | "attachments" | "directory";
 const kinds: Kind[] = ["requests", "audit", "attachments", "directory"];
 type Part = { kind: Kind; key: string; sha256: string; count: number };
@@ -43,16 +52,21 @@ type Run = {
   data: string;
 };
 export const manifestKey = (id: string) => `backup-manifests/${id}.json`;
-async function manifestKeyMaterial() {
+export const BACKUP_INTERVAL_MS = 24 * 60 * 60_000;
+const BACKUP_RETENTION_MS = 30 * BACKUP_INTERVAL_MS;
+function backupSecret() {
   const key = env.FUJI_BACKUP_KEY;
   if (!key || !/^[0-9a-f]{64}$/i.test(key))
     throw new BusinessError(
       "Backup signing needs to be configured by the workspace administrator.",
       503,
     );
+  return key;
+}
+async function manifestKeyMaterial() {
   return crypto.subtle.importKey(
     "raw",
-    new Uint8Array(key.match(/../g)!.map((x) => parseInt(x, 16))),
+    backupKeyBytes(backupSecret()),
     { name: "HMAC", hash: "SHA-256" },
     false,
     ["sign", "verify"],
@@ -135,7 +149,7 @@ export async function startBackup(
     cursor: "",
     parts: [],
     files: [],
-    expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+    expiresAt: new Date(Date.parse(at) + BACKUP_RETENTION_MS).toISOString(),
   };
   // D1 executes the batch as one transaction. The immutable staging rows preserve
   // one database snapshot while ordinary purchasing continues during R2 uploads.
@@ -214,7 +228,69 @@ async function readManifest(
         JSON.stringify({ ...manifest, manifestHash: await digest(raw) }),
       )
       .run();
-  return manifest;
+  return { manifest, raw };
+}
+export async function downloadBackup(
+  db: D1Database,
+  bucket: R2Bucket,
+  id: string,
+) {
+  if (!/^[0-9a-f-]{36}$/i.test(id))
+    throw new BusinessError("Invalid backup identifier.", 400);
+  const { manifest, raw } = await readManifest(db, bucket, id);
+  const salt = crypto.getRandomValues(new Uint8Array(ARCHIVE_SALT_BYTES));
+  const key = await archiveKey(backupSecret(), salt);
+  let index = 0;
+  async function encrypt(data: Uint8Array<ArrayBuffer>) {
+    const length = frameLength(data.length + 16);
+    const ciphertext = await crypto.subtle.encrypt(
+      frameParameters(index++),
+      key,
+      data,
+    );
+    return { length, ciphertext };
+  }
+  async function* bytes() {
+    yield ARCHIVE_MAGIC;
+    yield salt;
+    const header = await encrypt(new TextEncoder().encode(raw));
+    yield header.length;
+    yield new Uint8Array(header.ciphertext);
+    for (const part of [...manifest.parts, ...manifest.files]) {
+      const object = await bucket.get(part.key);
+      if (!object || object.size > MAX_FRAME_BYTES - 16)
+        throw new Error("A backup component is missing or too large.");
+      const data = new Uint8Array(await object.arrayBuffer());
+      if (
+        (await digest(data)) !== part.sha256 ||
+        ("size" in part && data.length !== part.size)
+      )
+        throw new Error("A backup component failed its integrity check.");
+      const entry = await encrypt(data);
+      yield entry.length;
+      yield new Uint8Array(entry.ciphertext);
+    }
+  }
+  const archive = bytes();
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const chunk = await archive.next();
+      if (chunk.done) controller.close();
+      else controller.enqueue(chunk.value);
+    },
+    async cancel() {
+      await archive.return(undefined);
+    },
+  });
+  const name = `fuji-backup-${manifest.at.slice(0, 10)}-${id}.fujibackup`;
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "Content-Disposition": `attachment; filename="${name}"`,
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 export async function startRestore(
   db: D1Database,
@@ -264,7 +340,7 @@ export async function startRestore(
       cursor: "",
       parts: [],
       files: [],
-      expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+      expiresAt: new Date(Date.parse(at) + BACKUP_RETENTION_MS).toISOString(),
     };
     try {
       await db.batch([
@@ -414,7 +490,7 @@ async function advanceRestore(
   data: Restore,
   deadline: number,
 ) {
-  const manifest = await readManifest(db, bucket, data.sourceId);
+  const { manifest } = await readManifest(db, bucket, data.sourceId);
   if (data.kind === "restore") {
     const lock = await db
       .prepare(

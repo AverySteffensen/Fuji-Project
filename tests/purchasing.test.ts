@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { buildSeed, DEMO_MEMBERS } from "../lib/purchasing/seed.ts";
 import {
   approvalSteps,
+  snapshotApprovalRoute,
   approve,
   reject,
   resubmit,
@@ -66,6 +67,24 @@ test("high-value purchases require all three dated steps in order", () => {
   assert.ok(p.approvals.every((a) => a.at === at));
   assert.throws(() => approve(p, actor("vicepresident"), at));
 });
+test("stored routes control decisions while legacy records use the original rules", () => {
+  const legacy = {
+    ...base(),
+    total: 2205,
+    purchaseType: "Facilities",
+  } as const;
+  const stored: Purchase = {
+    ...legacy,
+    approvalRoute: { policyVersion: "test-fixture", steps: [["controller"]] },
+  };
+  assert.deepEqual(approvalSteps(legacy), [
+    ["supervisor"],
+    ["controller"],
+    ["vicepresident"],
+  ]);
+  assert.equal(canApprove(actor("supervisor"), stored), false);
+  assert.equal(approve(stored, actor("controller"), at).status, "Approved");
+});
 test("one of controller or VP completes the middle tier", () => {
   for (const r of ["controller", "vicepresident"] as Role[]) {
     let p = { ...base(), total: 500 };
@@ -89,6 +108,7 @@ test("scope restricts employee and supervisor access and blocks self approval", 
 });
 test("rejection requires a reason and resubmission starts a fresh revision", () => {
   const p = base();
+  p.approvalRoute = snapshotApprovalRoute(p);
   assert.throws(() => reject(p, actor("supervisor"), at, ""));
   const rejected = reject(p, actor("supervisor"), at, "Need a second quote.");
   const revised = resubmit(
@@ -111,6 +131,15 @@ test("rejection requires a reason and resubmission starts a fresh revision", () 
   assert.equal(revised.total, 24.9);
   assert.equal(revised.status, "Pending");
   assert.equal(revised.approvals.length, 0);
+  assert.deepEqual(p.approvalRoute.steps, [
+    ["supervisor"],
+    ["controller"],
+    ["vicepresident"],
+  ]);
+  assert.deepEqual(revised.approvalRoute, {
+    policyVersion: "fuji-v1",
+    steps: [["supervisor"]],
+  });
   assert.equal(revised.order, null);
   assert.equal(rejected.rejectionReason, "Need a second quote.");
   assert.throws(() => resubmit(rejected, actor("accounting"), p, at));

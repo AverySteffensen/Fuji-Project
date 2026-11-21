@@ -49,6 +49,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
             status: "Approved",
             requesterId: "forged",
             order: { poNumber: "BAD" },
+            approvalRoute: { policyVersion: "forged", steps: [["employee"]] },
           }),
         ),
       );
@@ -58,6 +59,10 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
       assert.equal(created.requesterId, "demo-employee");
       assert.equal(created.status, "Pending");
       assert.equal(created.order, null);
+      assert.deepEqual(created.approvalRoute, {
+        policyVersion: "fuji-v1",
+        steps: [["supervisor"], ["controller"], ["vicepresident"]],
+      });
     },
   );
   const patch = async (
@@ -104,6 +109,10 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
         (a: any) => a.action === "Revised and resubmitted",
       );
       assert.equal(revised.previousVersion.status, "Rejected");
+      assert.deepEqual(
+        revised.previousVersion.approvalRoute,
+        created.approvalRoute,
+      );
       assert.equal(
         revised.previousVersion.rejectionReason,
         "Confirm the right specification.",
@@ -177,7 +186,6 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
         headers: {
           "x-demo-member": "demo-employee",
           Origin: "https://test.local",
-          Cookie: harness.cookies.get("owner-1")!,
         },
         body: f,
       });
@@ -341,7 +349,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
           new Request("https://test.local/api", {
             method: "POST",
             body,
-            headers: { Cookie: harness.cookies.get("owner-1")! },
+            headers: {},
           }),
         );
         assert.equal(r.status, status);
@@ -379,7 +387,7 @@ test("persistent API workflow, permissions, version conflicts, attachments, and 
         method: "POST",
         headers: {
           Origin: "https://evil.test",
-          Cookie: harness.cookies.get("owner-1")!,
+
           "Content-Type": "application/json",
         },
         body: JSON.stringify(input),

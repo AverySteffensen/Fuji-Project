@@ -30,7 +30,7 @@ export async function createHarness() {
         results: sql.prepare(this.query).all(...this.values),
       };
     }
-    async run() {
+    run() {
       const result = sql.prepare(this.query).run(...this.values);
       return { success: true, meta: { changes: Number(result.changes) } };
     }
@@ -53,7 +53,7 @@ export async function createHarness() {
                   results: sql.prepare(st.query).all(...st.values),
                   meta: {},
                 }
-              : await st.run(),
+              : st.run(),
           );
         sql.exec("COMMIT");
         return results;
@@ -87,6 +87,7 @@ export async function createHarness() {
       return row
         ? {
             body: row.body.slice(0),
+            size: row.body.byteLength,
             arrayBuffer: async () => row.body.slice(0),
             text: async () => new TextDecoder().decode(row.body),
             customMetadata: row.metadata,
@@ -115,14 +116,11 @@ export async function createHarness() {
   const env = {
     DB,
     BUCKET,
-    FUJI_MFA_KEY: "a".repeat(64),
     FUJI_BACKUP_KEY: "c".repeat(64),
     FUJI_OPERATIONS_TOKEN: "b".repeat(64),
   };
   (globalThis as any).__testEnv = env;
   const routes = {
-    session: await import("../app/api/security/session/route.ts"),
-    mfa: await import("../app/api/security/mfa/route.ts"),
     workspace: await import("../app/api/workspace/route.ts"),
     register: await import("../app/api/register/route.ts"),
     export: await import("../app/api/register/export/route.ts"),
@@ -134,17 +132,21 @@ export async function createHarness() {
     tick: await import("../app/api/operations/run/route.ts"),
     health: await import("../app/api/health/route.ts"),
   };
-  const auth = await import("../lib/purchasing/auth-security.ts");
-  const cookies = new Map<string, string>(),
-    recovery = new Map<string, string[]>();
-  let userId = "owner-1";
-  const req = (method = "GET", actor = "", data?: any, path = "/api") =>
+  const req = (
+    method = "GET",
+    actor = "",
+    data?: any,
+    path = "/api",
+    submissionKey = crypto.randomUUID() as string,
+  ) =>
     new Request(`https://test.local${path}`, {
       method,
       headers: {
         ...(actor ? { "x-demo-member": actor } : {}),
         ...(data ? { "Content-Type": "application/json" } : {}),
-        ...(cookies.get(userId) ? { Cookie: cookies.get(userId)! } : {}),
+        ...(method === "POST" && submissionKey
+          ? { "Idempotency-Key": submissionKey }
+          : {}),
         Origin: "https://test.local",
       },
       ...(data ? { body: JSON.stringify(data) } : {}),
@@ -153,57 +155,24 @@ export async function createHarness() {
     status: response.status,
     data: (await response.json()) as any,
   });
-  const identity = async (
-    id = "owner-1",
-    email = "owner@example.test",
-    completeMfa = true,
-  ) => {
-    userId = id;
+  const identity = async (id = "owner-1", email = "owner@example.test") => {
     (globalThis as any).__testAuthHeaders = new Headers({
       "oai-authenticated-user-id": id,
       "oai-authenticated-user-email": email,
     });
-    const session = await routes.session.GET(req());
-    const cookie = session.headers.get("set-cookie");
-    if (cookie) cookies.set(id, cookie.split(";")[0]);
-    const state = (await read(session)).data;
-    if (completeMfa && state.state === "enroll") {
-      const setup = await read(
-        await routes.mfa.POST(req("POST", "", { action: "enroll" })),
-      );
-      const result = await read(
-        await routes.mfa.POST(
-          req("POST", "", {
-            action: "confirm",
-            code: await auth.totp(setup.data.secret),
-          }),
-        ),
-      );
-      if (result.status !== 200)
-        throw new Error(
-          `Test authenticator setup failed: ${JSON.stringify(result)}`,
-        );
-      recovery.set(id, result.data.recoveryCodes);
-    } else if (completeMfa && state.state === "verify") {
-      const code = recovery.get(id)?.shift();
-      const result = await read(
-        await routes.mfa.POST(req("POST", "", { action: "verify", code })),
-      );
-      if (result.status !== 200)
-        throw new Error("Test authenticator verification failed");
-    }
-    return state;
+    return (await routes.workspace.GET(req())).status;
+  };
+  const signOut = () => {
+    (globalThis as any).__testAuthHeaders = new Headers();
   };
   return {
     sql,
     objects,
     env,
     routes,
-    auth,
     req,
     read,
     identity,
-    cookies,
-    recovery,
+    signOut,
   };
 }

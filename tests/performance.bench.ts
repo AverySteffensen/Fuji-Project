@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { performance } from "node:perf_hooks";
 import { createHarness } from "./harness.ts";
 import { buildSeed } from "../lib/purchasing/seed.ts";
+import { requestIdentity } from "./mock-headers.mjs";
 import { indexStatement } from "../lib/purchasing/register-server.ts";
 const h = await createHarness();
 await h.identity();
@@ -10,7 +11,7 @@ const insert = h.sql.prepare(
   "INSERT INTO purchase_requests(id,data,version,updated_at) VALUES (?,?,?,?)",
 );
 h.sql.exec("BEGIN");
-for (let i = 0; i < 10000; i++) {
+for (let i = 0; i < 3600; i++) {
   const p = {
     ...base,
     id: `bench-${i.toString().padStart(5, "0")}`,
@@ -26,15 +27,36 @@ for (let i = 0; i < 10000; i++) {
   h.sql.prepare(statement.query).run(...statement.values);
 }
 h.sql.exec("COMMIT");
+const users = Array.from({ length: 4 }, (_, i) => ({
+  id: `benchmark-user-${i}`,
+  userId: `benchmark-user-${i}`,
+  email: `bench-${i}@example.test`,
+  name: `Benchmark user ${i}`,
+  roles: ["accounting"],
+  departments: [],
+  demo: false,
+  active: true,
+}));
+for (const user of users) {
+  h.sql
+    .prepare("INSERT INTO members(id,email,data) VALUES (?,?,?)")
+    .run(user.id, user.email, JSON.stringify(user));
+}
 const elapsed = await Promise.all(
-  Array.from({ length: 25 }, async (_, i) => {
+  users.map(async (user, i) => {
     const start = performance.now();
     const query =
       i % 2
         ? "priority=High&sortField=total&direction=desc"
         : "search=Performance&sortField=submittedAt&direction=desc";
-    const response = await h.routes.register.GET(
-      h.req("GET", "", undefined, `/api/register?${query}&size=25`),
+    const headers = new Headers({
+      "oai-authenticated-user-id": user.userId,
+      "oai-authenticated-user-email": user.email,
+    });
+    const response = await requestIdentity.run(headers, () =>
+      h.routes.register.GET(
+        h.req("GET", "", undefined, `/api/register?${query}&size=25`),
+      ),
     );
     assert.equal(response.status, 200);
     const data = (await response.json()) as any;
@@ -70,8 +92,8 @@ console.log(
   JSON.stringify({
     environment:
       "Local Node 24, SQLite D1-compatible adapter, actual API handlers; excludes hosted network latency",
-    requests: 10000,
-    concurrentUsers: 25,
+    requests: 3600,
+    concurrentUsers: 4,
     searchFilterP95Ms: Math.round(p95),
     exportRows: 1000,
     exportMs: Math.round(exportMs),

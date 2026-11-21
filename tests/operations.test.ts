@@ -1,6 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createHarness } from "./harness.ts";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { unpackBackup } from "../scripts/unpack-backup.mjs";
 const h = await createHarness();
 const { req, read, routes, sql, objects } = h;
 const operations = await import("../lib/purchasing/operations.ts");
@@ -51,7 +55,6 @@ test("backup snapshots include consistent records, audit and private file bytes 
       new Request("https://test.local/api", {
         method: "POST",
         headers: {
-          Cookie: h.cookies.get("owner-1")!,
           Origin: "https://test.local",
         },
         body: form,
@@ -105,6 +108,33 @@ test("backup snapshots include consistent records, audit and private file bytes 
     "Withdrawn",
   );
 });
+test("owner downloads an encrypted portable snapshot with its private attachment", async () => {
+  const path = `/api/operations?download=${backupId}`;
+  assert.equal((await routes.operations.GET(req("GET", "demo-accounting", undefined, path))).status, 403);
+  const response = await routes.operations.GET(req("GET", "", undefined, path));
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get("Content-Disposition") || "", /attachment.*\.fujibackup/);
+  const archive = Buffer.from(await response.arrayBuffer());
+  assert.ok(!archive.includes("original quote"));
+  assert.ok(!archive.includes("Backup Supplier"));
+  const dir = await mkdtemp(join(tmpdir(), "fuji-archive-"));
+  try {
+    const inputPath = join(dir, "snapshot.fujibackup");
+    await writeFile(inputPath, archive);
+    const recovered = join(dir, "verified");
+    const result = await unpackBackup(inputPath, recovered, h.env.FUJI_BACKUP_KEY);
+    assert.equal(result.id, backupId);
+    assert.equal(await readFile(join(recovered, "backups", backupId, "files", fileId), "utf8"), "original quote");
+    const manifest = await readFile(join(recovered, operations.manifestKey(backupId)), "utf8");
+    assert.equal(manifest, new TextDecoder().decode(objects.get(operations.manifestKey(backupId))!.body));
+    await assert.rejects(() => unpackBackup(inputPath, join(dir, "wrong-key"), "f".repeat(64)));
+    await writeFile(inputPath, archive.subarray(0, archive.length - 2));
+    await assert.rejects(() => unpackBackup(inputPath, join(dir, "partial"), h.env.FUJI_BACKUP_KEY), /incomplete/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("restoration is atomic, restores attachment bytes, retains audit history and invalidates stale versions", async () => {
   const subsequent = (
     await read(await routes.create.POST(req("POST", "", input)))
@@ -338,4 +368,139 @@ test("independent monitoring alerts during an app outage, retries delivery and d
   assert.equal(deliveries.length, 2);
   assert.ok(deliveries[0].startsWith("outage:"));
   assert.ok(deliveries[1].startsWith("recovered:"));
+});
+
+test("one daily snapshot follows the Eastern date across DST and overlapping schedulers", async (t) => {
+  // Both 01:10 times on Nov 1 are the same local calendar day.
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-11-01T03:30:00Z"),
+  });
+  const daily = await createHarness();
+  await daily.identity();
+  const db = daily.env.DB as unknown as D1Database;
+  const bucket = daily.env.BUCKET as unknown as R2Bucket;
+  const manual = await operations.startBackup(db, "owner-1");
+  await operations.runStep(db, bucket, manual);
+  const first = await monitoring.runDailyBackup(db, bucket);
+  assert.equal(first.status, "complete");
+  assert.equal(first.day, "2026-10-31");
+  assert.notEqual(first.id, manual);
+  assert.equal(
+    Date.parse(first.expiresAt!) - Date.now(),
+    30 * operations.BACKUP_INTERVAL_MS,
+  );
+  const summary = await monitoring.operationsSummary(db);
+  assert.equal(summary.latestDailyBackup?.id, first.id);
+  assert.equal(summary.lastCompletedDailyBackupAt, new Date().toISOString());
+  assert.equal(summary.lastDailyBackupCheck, new Date().toISOString());
+  assert.equal(summary.dailyBackupActive, true);
+  assert.equal(summary.schedulerActive, false);
+  assert.equal(summary.lastTick, null);
+  assert.equal(summary.health.checks, 0);
+
+  t.mock.timers.setTime(Date.parse("2026-11-01T05:10:00Z"));
+  await Promise.all([
+    monitoring.runDailyBackup(db, bucket),
+    monitoring.runDailyBackup(db, bucket),
+    monitoring.operationsTick(db, bucket, []),
+  ]);
+  const second = await monitoring.runDailyBackup(db, bucket);
+  assert.equal(second.status, "complete");
+  assert.equal(second.day, "2026-11-01");
+  assert.notEqual(second.id, first.id);
+  t.mock.timers.setTime(Date.parse("2026-11-01T06:10:00Z"));
+  assert.deepEqual(await monitoring.runDailyBackup(db, bucket), second);
+  assert.equal(
+    daily.sql
+      .prepare(
+        "SELECT COUNT(*) AS n FROM backup_runs WHERE json_extract(data,'$.actorId')='scheduled-operations'",
+      )
+      .get()?.n,
+    2,
+  );
+  daily.sql.close();
+});
+
+test("a previous day's unfinished snapshot resumes without substituting for today or advancing a restore", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-11-21T04:50:00Z"),
+  });
+  const daily = await createHarness();
+  await daily.identity();
+  const db = daily.env.DB as unknown as D1Database;
+  const bucket = daily.env.BUCKET as unknown as R2Bucket;
+  const priorId = await operations.startBackup(db, "scheduled-operations");
+  t.mock.timers.setTime(Date.parse("2026-11-21T05:10:00Z"));
+  assert.equal((await monitoring.runDailyBackup(db, bucket)).status, "working");
+  assert.equal(
+    daily.sql.prepare("SELECT status FROM backup_runs WHERE id=?").get(priorId)
+      ?.status,
+    "complete",
+  );
+  const today = await monitoring.runDailyBackup(db, bucket);
+  assert.equal(today.status, "complete");
+  assert.equal(today.day, "2026-11-21");
+  assert.notEqual(today.id, priorId);
+  t.mock.timers.setTime(Date.parse("2026-11-22T05:10:00Z"));
+  const restoration = await operations.startRestore(db, bucket, today.id!, {
+    id: "owner-1",
+    name: "Owner",
+  });
+  const original = daily.sql
+    .prepare("SELECT data FROM backup_runs WHERE id=?")
+    .get(restoration)?.data;
+  const blocked = await monitoring.runDailyBackup(db, bucket);
+  assert.equal(blocked.status, "working");
+  assert.ok(blocked.retryAfterSeconds);
+  assert.equal(
+    daily.sql
+      .prepare("SELECT data FROM backup_runs WHERE id=?")
+      .get(restoration)?.data,
+    original,
+  );
+  daily.sql.close();
+});
+
+test("a failed scheduled snapshot retries, preserves completed copies, and drains expired copies", async (t) => {
+  t.mock.timers.enable({
+    apis: ["Date"],
+    now: Date.parse("2026-11-21T14:00:00Z"),
+  });
+  const daily = await createHarness();
+  await daily.identity();
+  const db = daily.env.DB as unknown as D1Database;
+  const bucket = daily.env.BUCKET as unknown as R2Bucket;
+  const offlineBucket = {
+    ...daily.env.BUCKET,
+    put: async () => {
+      throw new Error("temporary storage outage");
+    },
+  } as unknown as R2Bucket;
+  const failed = await monitoring.runDailyBackup(db, offlineBucket);
+  assert.equal(failed.status, "failed");
+  assert.ok(failed.retryAfterSeconds);
+  assert.deepEqual(await monitoring.runDailyBackup(db, bucket), failed);
+  t.mock.timers.tick(300001);
+  const recovered = await monitoring.runDailyBackup(db, bucket);
+  assert.equal(recovered.status, "complete");
+  assert.notEqual(recovered.id, failed.id);
+  for (const id of ["old1", "old2"]) {
+    daily.sql
+      .prepare(
+        "INSERT INTO backup_runs(id,at,status,data) VALUES (?,'2026-01-01','complete',?)",
+      )
+      .run(
+        id,
+        JSON.stringify({ kind: "backup", expiresAt: "2026-02-01T00:00:00Z" }),
+      );
+    await daily.env.BUCKET.put(operations.manifestKey(id), "expired");
+  }
+  assert.equal((await monitoring.runDailyBackup(db, bucket)).status, "working");
+  assert.deepEqual(await monitoring.runDailyBackup(db, bucket), recovered);
+  assert.equal(daily.objects.has(operations.manifestKey("old1")), false);
+  assert.equal(daily.objects.has(operations.manifestKey("old2")), false);
+  assert.equal(daily.objects.has(operations.manifestKey(recovered.id!)), true);
+  daily.sql.close();
 });

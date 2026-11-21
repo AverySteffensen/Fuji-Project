@@ -12,13 +12,14 @@ import {
   startBackup,
   startRestore,
   discoverBackups,
+  downloadBackup,
 } from "@/lib/purchasing/operations";
 import {
   operationsSummary,
   recordFailureAlerts,
 } from "@/lib/purchasing/monitoring";
 async function authorize(req: Request) {
-  const { me } = await context(req);
+  const { me, owner } = await context(req);
   if (!hasRole(me, "admin") || me.demo)
     throw new BusinessError(
       "Only the workspace owner can manage backups and monitoring.",
@@ -26,11 +27,20 @@ async function authorize(req: Request) {
     );
   if (!env.BUCKET)
     throw new BusinessError("File storage is not connected.", 503);
-  return me;
+  return { me, owner };
 }
 export async function GET(req: Request) {
   try {
-    await authorize(req);
+    const { owner } = await authorize(req);
+    const downloadId = new URL(req.url).searchParams.get("download");
+    if (downloadId !== null) {
+      if (!owner)
+        throw new BusinessError(
+          "Only the workspace owner can download backups.",
+          403,
+        );
+      return await downloadBackup(database(), env.BUCKET!, downloadId);
+    }
     return json(await operationsSummary(database()));
   } catch (error) {
     return handleError(error);
@@ -38,7 +48,7 @@ export async function GET(req: Request) {
 }
 export async function POST(req: Request) {
   try {
-    const me = await authorize(req);
+    const { me } = await authorize(req);
     const input = await body(req);
     const db = database();
     const bucket = env.BUCKET!;
