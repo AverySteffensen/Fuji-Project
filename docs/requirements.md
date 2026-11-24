@@ -6,7 +6,7 @@ The IDs follow Team 2’s requirements register. Chase Burton supplied the purch
 
 | ID | Behavior in V5 |
 | --- | --- |
-| FR01–FR02 | Sites verifies each visitor’s identity. The app checks active membership, role, department, record ownership and approval authority before granting access. |
+| FR01–FR02 | Sites verifies each visitor’s identity. The app checks active membership, assigned roles, access-management level, record ownership and approval authority before granting access. |
 | FR03–FR05 | An employee submits a purchase type, priority, item details and business explanation. A valid draft becomes a numbered Pending request at revision 1 with its requester and submission time. Invalid or canceled drafts create no record. Retrying the same submission returns the existing request. |
 | FR06 | Employees can see their own requests, including dates, type, priority, status and details. |
 | FR07–FR08 | The Approvals queue shows Pending requests the current reviewer can decide. Opening or leaving a request keeps its status. |
@@ -44,7 +44,7 @@ The implementation follows the purchasing procedure Chase supplied. The team ass
 
 | Purchase | Required approval |
 | --- | --- |
-| Ordinary, up to and including $150 | Immediate Supervisor. If unavailable, Treasurer or Controller. |
+| Ordinary, up to and including $150 | Any Supervisor. If unavailable, Treasurer or Controller. |
 | Ordinary, over $150 through $1,000 | Supervisor, then either Controller or Vice President. |
 | Ordinary, over $1,000 | Supervisor, then Controller, then Vice President. |
 | Raw materials, any amount | Plant Manager or Controller. |
@@ -56,3 +56,7 @@ Requesters cannot approve their own proposals. Accounting can record an ordinary
 ## Open operating checks
 
 The first live verification included an owner download. On-site acceptance still includes storing a copy on Fuji’s protected server, arranging custody of the recovery key and timing a representative restore in an isolated environment. Consecutive scheduled runs, uptime, alert delivery and hosted performance require observations over time. The [operations guide](operations.md) describes the checks.
+
+## November 24 access revision
+
+One account may hold multiple operational roles. Supervisors review requests across all departments. Authorized higher-level members can change lower-level role assignments. View As provides read-only access to an eligible individual’s register. See the [access-management levels and restrictions](security.md).

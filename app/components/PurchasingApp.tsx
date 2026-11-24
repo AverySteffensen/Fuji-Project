@@ -1,4 +1,10 @@
 "use client";
+import {
+  ACCESS_LEVEL,
+  canEditMember,
+  canViewAs,
+  memberLevel,
+} from "@/lib/purchasing/access";
 import OperationsPanel from "./OperationsPanel";
 import { useState, useEffect, useMemo, useRef, type FormEvent } from "react";
 import {
@@ -640,7 +646,7 @@ function RequestForm({
                     field("supervisorUnavailable", e.target.checked)
                   }
                 />
-                Immediate supervisor is unavailable
+                Supervisor is unavailable
               </label>
             )}
             <label className="checkbox-label">
@@ -978,7 +984,7 @@ function RequestDetail({
           <div className="alert error">
             <strong>Proposal rejected</strong>
             <p>{p.rejectionReason}</p>
-            {p.requesterId === w.me.id && (
+            {!w.readOnly && p.requesterId === w.me.id && (
               <button className="btn" onClick={onRevise}>
                 <RotateCcw size={15} />
                 Revise & resubmit
@@ -1106,27 +1112,29 @@ function RequestDetail({
             <section className="attachment-section">
               <div className="row spread">
                 <h3>Supporting documents</h3>
-                {(p.requesterId === w.me.id || hasRole(w.me, "accounting")) && (
-                  <label className="btn upload-btn">
-                    <Paperclip size={15} />
-                    {busy ? "Uploading…" : "Attach file"}
-                    <input
-                      type="file"
-                      disabled={busy}
-                      accept=".pdf,.jpg,.jpeg,.png,.txt"
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0];
-                        if (!f) return;
-                        try {
-                          setError("");
-                          await onUpload(f);
-                        } catch (e) {
-                          setError((e as Error).message);
-                        }
-                      }}
-                    />
-                  </label>
-                )}
+                {!w.readOnly &&
+                  (p.requesterId === w.me.id ||
+                    hasRole(w.me, "accounting")) && (
+                    <label className="btn upload-btn">
+                      <Paperclip size={15} />
+                      {busy ? "Uploading…" : "Attach file"}
+                      <input
+                        type="file"
+                        disabled={busy}
+                        accept=".pdf,.jpg,.jpeg,.png,.txt"
+                        onChange={async (e) => {
+                          const f = e.target.files?.[0];
+                          if (!f) return;
+                          try {
+                            setError("");
+                            await onUpload(f);
+                          } catch (e) {
+                            setError((e as Error).message);
+                          }
+                        }}
+                      />
+                    </label>
+                  )}
               </div>
               {p.attachments.length ? (
                 p.attachments.map((a) => (
@@ -1332,7 +1340,7 @@ function RequestDetail({
             </div>
           </>
         )}
-        {canApprove(w.me, p) && (
+        {!w.readOnly && canApprove(w.me, p) && (
           <div className="review-box">
             <h3>Review this proposal</h3>
             <p>
@@ -1413,20 +1421,26 @@ function RequestDetail({
           <Printer size={15} />
           Print
         </button>
-        <button className="btn" onClick={onReorder}>
-          <RotateCcw size={15} />
-          Reorder
-        </button>
-        {p.requesterId === w.me.id && p.status === "Pending" && !p.order && (
-          <button
-            className="btn danger"
-            disabled={busy}
-            onClick={() => setWithdrawing(true)}
-          >
-            Withdraw request
+        {!w.readOnly && (
+          <button className="btn" onClick={onReorder}>
+            <RotateCcw size={15} />
+            Reorder
           </button>
         )}
-        {hasRole(w.me, "accounting") &&
+        {!w.readOnly &&
+          p.requesterId === w.me.id &&
+          p.status === "Pending" &&
+          !p.order && (
+            <button
+              className="btn danger"
+              disabled={busy}
+              onClick={() => setWithdrawing(true)}
+            >
+              Withdraw request
+            </button>
+          )}
+        {!w.readOnly &&
+          hasRole(w.me, "accounting") &&
           p.status !== "Rejected" &&
           p.status !== "Withdrawn" &&
           (p.status === "Approved" || p.emergency) && (
@@ -1441,8 +1455,37 @@ function RequestDetail({
 }
 
 export default function PurchasingApp() {
-  const [w, setW] = useState<Workspace | null>(null);
   const [actor, setActor] = useState("");
+  const [target, setTarget] = useState("");
+  return (
+    <RegisterWorkspace
+      key={JSON.stringify([actor, target])}
+      actor={actor}
+      setActor={setActor}
+      target={target}
+      setTarget={setTarget}
+    />
+  );
+}
+function RegisterWorkspace({
+  actor,
+  setActor,
+  target,
+  setTarget,
+}: {
+  actor: string;
+  setActor: (s: string) => void;
+  target: string;
+  setTarget: (s: string) => void;
+}) {
+  const [w, setW] = useState<Workspace | null>(null);
+  const [picker, setPicker] = useState(false);
+  const [choice, setChoice] = useState("");
+  const perspectiveHeaders: Record<string, string> = target
+    ? { "x-view-as": target }
+    : actor
+      ? { "x-demo-member": actor }
+      : {};
   const [view, setView] = useState("requests");
   const [filters, setFilters] = useState<RegisterFilters>({
     ...DEFAULT_FILTERS,
@@ -1478,10 +1521,12 @@ export default function PurchasingApp() {
   const patchFilters = (patch: Partial<RegisterFilters>) =>
     setFilters((f) => ({ ...f, ...patch }));
   const request = async (path: string, init: RequestInit = {}) => {
+    if (target && init.method && init.method !== "GET")
+      throw new Error("View As is read-only.");
     const response = await fetch(path, {
       ...init,
       headers: {
-        ...(actor ? { "x-demo-member": actor } : {}),
+        ...perspectiveHeaders,
         ...init.headers,
       },
     });
@@ -1720,7 +1765,7 @@ export default function PurchasingApp() {
       if (tableView) {
         setExporting(true);
         const response = await fetch(`/api/register/export?${queryParams}`, {
-          headers: actor ? { "x-demo-member": actor } : {},
+          headers: perspectiveHeaders,
         });
         if (!response.ok) {
           const failure = (await response.json()) as {
@@ -1817,6 +1862,24 @@ export default function PurchasingApp() {
             </span>
           </a>
           <div className="register-account">
+            {target ? (
+              <>
+                <strong role="status">
+                  Read-only · {w?.me.name || "View As"}
+                </strong>
+                <button className="btn" onClick={() => setTarget("")}>
+                  Exit View As
+                </button>
+              </>
+            ) : (
+              w &&
+              !actor &&
+              w.members.some((m) => canViewAs(w.me, m)) && (
+                <button className="btn" onClick={() => setPicker(true)}>
+                  View As
+                </button>
+              )
+            )}
             {w && hasRole(w.me, "admin") && !w.me.demo && (
               <button className="btn" onClick={() => setOperationsOpen(true)}>
                 <ShieldCheck size={16} />
@@ -1852,7 +1915,7 @@ export default function PurchasingApp() {
                 {w?.owner &&
                   w.actors.map((m) => (
                     <option value={m.id} key={m.id}>
-                      {m.name} · {ROLE_NAMES[m.roles[0]]}
+                      {m.name} · {m.roles.map((r) => ROLE_NAMES[r]).join(", ")}
                     </option>
                   ))}
               </select>
@@ -1861,7 +1924,12 @@ export default function PurchasingApp() {
         </div>
         <nav className="register-tabs" aria-label="Workspace sections">
           {views
-            .filter(([id]) => id !== "people" || w?.owner)
+            .filter(
+              ([id]) =>
+                id !== "people" ||
+                w?.owner ||
+                (w && !w.me.demo && memberLevel(w.me) > 1),
+            )
             .map(([id, label, Icon]) => (
               <button
                 key={id}
@@ -1938,7 +2006,7 @@ export default function PurchasingApp() {
                   {exporting ? "Exporting…" : "Export data"}{" "}
                   <span className="file-type">.xlsx</span>
                 </button>
-                {tableView && (
+                {tableView && !target && (
                   <button
                     className="btn primary"
                     onClick={() => setForm({ revision: false })}
@@ -2417,6 +2485,41 @@ export default function PurchasingApp() {
           </>
         )}
       </main>
+      {picker && w && (
+        <Modal title="View As" onClose={() => setPicker(false)}>
+          <div className="modal-body">
+            <label>
+              Person
+              <select
+                value={choice}
+                onChange={(e) => setChoice(e.target.value)}
+              >
+                <option value="">Choose a person</option>
+                {w.members
+                  .filter((m) => canViewAs(w.me, m))
+                  .map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} · {m.roles.map((r) => ROLE_NAMES[r]).join(", ")}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <p>
+              You can read this person’s register and open requests. Exit View
+              As to make changes under your own name.
+            </p>
+          </div>
+          <div className="modal-footer">
+            <button
+              className="btn primary"
+              disabled={!choice}
+              onClick={() => setTarget(choice)}
+            >
+              Open read-only view
+            </button>
+          </div>
+        </Modal>
+      )}
       {toast && (
         <div className="toast" role="status">
           <CheckCircle2 size={18} />
@@ -2482,7 +2585,7 @@ export default function PurchasingApp() {
           }}
           onDownload={async (attachment) => {
             const response = await fetch(`/api/attachments/${attachment.id}`, {
-              headers: actor ? { "x-demo-member": actor } : {},
+              headers: perspectiveHeaders,
             });
             if (!response.ok)
               throw new Error("The file could not be downloaded.");
@@ -2514,13 +2617,10 @@ export default function PurchasingApp() {
 const POLICY_ROWS = [
   [
     "Up to $150",
-    "Immediate Supervisor. Treasurer or Controller if the supervisor is absent.",
+    "Any Supervisor. Treasurer or Controller if the supervisor is absent.",
   ],
-  [
-    "Above $150 through $1,000",
-    "Immediate Supervisor → Controller or Vice President",
-  ],
-  ["Above $1,000", "Immediate Supervisor → Controller → Vice President"],
+  ["Above $150 through $1,000", "Supervisor → Controller or Vice President"],
+  ["Above $1,000", "Supervisor → Controller → Vice President"],
   ["Raw materials, any amount", "Plant Manager or Controller"],
 ];
 
@@ -2535,12 +2635,21 @@ function People({
   refresh: () => Promise<any>;
   setToast: (s: string) => void;
 }) {
+  const [editing, setEditing] = useState<Member | null>(null);
   const [name, setName] = useState(""),
-    [email, setEmail] = useState(""),
-    [role, setRole] = useState("employee"),
-    [department, setDepartment] = useState("Packaging (90)"),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false);
+    [email, setEmail] = useState("");
+  const [roles, setRoles] = useState<Role[]>(["employee"]);
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState("");
+  const owner = w.owner && !w.me.demo;
+  const choose = (m: Member | null) => {
+    setEditing(m);
+    setName(m?.name ?? "");
+    setEmail(m?.email ?? "");
+    setRoles(m?.roles ?? ["employee"]);
+    setError("");
+  };
+  const formVisible = !w.readOnly && !w.me.demo && (editing || owner);
   return (
     <div className="people-grid">
       <section className="panel">
@@ -2555,31 +2664,41 @@ function People({
               <div>
                 <strong>{m.name}</strong>
                 <small>
-                  {m.email || ""}
-                  {m.departments.length > 0
-                    ? " · " +
-                      (m.departments.length > 2
-                        ? "All departments"
-                        : m.departments.map(shortDept).join(", "))
-                    : ""}
+                  {[
+                    m.email,
+                    m.roles.includes("supervisor")
+                      ? "All departments"
+                      : m.departments.map(shortDept).join(", "),
+                    m.active === false ? "Inactive" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" · ")}
                 </small>
+                <small>{m.roles.map((r) => ROLE_NAMES[r]).join(", ")}</small>
               </div>
-              <Badge value={ROLE_NAMES[m.roles[0]]} />
+              {!w.readOnly && canEditMember(w.me, m) && (
+                <button
+                  className="btn"
+                  disabled={busy}
+                  aria-label={`Edit roles for ${m.name}`}
+                  onClick={() => choose(m)}
+                >
+                  Edit roles
+                </button>
+              )}
             </div>
           ))}
         </div>
       </section>
-      <section className="panel people-form">
-        <h2>Add or update a member</h2>
-        <p>
-          Members sign in with ChatGPT. Assign roles here after granting access
-          through the Site’s sharing controls. This form sends no email.
-        </p>
-        {!hasRole(w.me, "admin") ? (
-          <div className="alert info">
-            Switch to Workspace owner to manage real members.
-          </div>
-        ) : (
+      {formVisible && (
+        <section className="panel people-form">
+          <h2>{editing ? "Edit roles" : "Add a member"}</h2>
+          {owner && !editing && (
+            <p>
+              Grant Site access separately, then use the person’s ChatGPT
+              sign-in email.
+            </p>
+          )}
           <form
             onSubmit={async (e) => {
               e.preventDefault();
@@ -2589,12 +2708,18 @@ function People({
                 await request("/api/members", {
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ name, email, role, department }),
+                  body: JSON.stringify({
+                    name,
+                    email,
+                    roles,
+                    ...(editing
+                      ? { expectedRoles: editing.roles }
+                      : { createOnly: true }),
+                  }),
                 });
                 await refresh();
-                setName("");
-                setEmail("");
-                setToast("Member role saved.");
+                choose(null);
+                setToast("Member roles saved.");
               } catch (e) {
                 setError((e as Error).message);
               } finally {
@@ -2603,58 +2728,67 @@ function People({
             }}
           >
             <label>
-              Full name *
+              Full name
               <input
                 required
                 value={name}
+                readOnly={!owner}
                 onChange={(e) => setName(e.target.value)}
               />
             </label>
             <label>
-              ChatGPT sign-in email *
+              ChatGPT sign-in email
               <input
-                required
                 type="email"
+                required
                 value={email}
+                readOnly={!!editing}
                 onChange={(e) => setEmail(e.target.value)}
               />
             </label>
-            <label>
-              Role
-              <select value={role} onChange={(e) => setRole(e.target.value)}>
-                {Object.entries(ROLE_NAMES)
-                  .filter(([r]) => r !== "admin")
-                  .map(([r, n]) => (
-                    <option key={r} value={r}>
-                      {n}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            {role === "supervisor" && (
-              <label>
-                Department
-                <select
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
-                >
-                  {DEPARTMENTS.map((d) => (
-                    <option key={d}>{d}</option>
-                  ))}
-                </select>
-              </label>
+            <fieldset className="role-options">
+              <legend>Assigned roles</legend>
+              {Object.entries(ROLE_NAMES).map(([key, label]) => {
+                const role = key as Role;
+                if (ACCESS_LEVEL[role] >= memberLevel(w.me)) return null;
+                return (
+                  <label key={role}>
+                    <input
+                      type="checkbox"
+                      checked={roles.includes(role)}
+                      onChange={(e) =>
+                        setRoles(
+                          e.target.checked
+                            ? [...roles, role]
+                            : roles.filter((r) => r !== role),
+                        )
+                      }
+                    />
+                    {label}
+                  </label>
+                );
+              })}
+            </fieldset>
+            {roles.includes("supervisor") && (
+              <p>Supervisors cover all departments.</p>
             )}
-            {error && (
-              <div className="alert error" role="alert">
-                {error}
-              </div>
-            )}
-            <button className="btn primary" disabled={busy}>
+            {error && <p role="alert">{error}</p>}
+            <button className="btn primary" disabled={busy || !roles.length}>
               {busy ? "Saving…" : "Save member"}
             </button>
+            {editing && (
+              <button
+                type="button"
+                className="btn"
+                disabled={busy}
+                onClick={() => choose(null)}
+              >
+                Cancel
+              </button>
+            )}
           </form>
-        )}
-      </section>
+        </section>
+      )}
     </div>
   );
 }

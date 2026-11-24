@@ -21,3 +21,18 @@ The independent uptime monitor uses separate service authorization. Its configur
 ## Verification
 
 Tests cover sign-in, active membership, role and record access, HTTPS handling, cross-origin purchasing writes, conflicting updates, retained history, backup integrity, owner-only downloads and restoration. The [verification record](verification.md) identifies hosted checks and remaining operating targets. A review of provider-managed storage settings and a full-shift test on a Fuji workstation remain open.
+
+
+## Role management and View As
+
+| Access-management level | Roles at that level |
+| --- | --- |
+| 5 | Workspace owner |
+| 4 | Vice President |
+| 3 | Controller, Plant Manager, Treasurer |
+| 2 | Supervisor |
+| 1 | Employee, Accounting |
+
+The levels govern member administration and preview eligibility. Purchasing actions still require the operational role for the action. A person with several roles receives their combined purchasing permissions. The owner adds members after granting Site access. To edit roles, both the member’s highest existing role and every proposed role must be strictly below the editor’s highest role. The owner and built-in sample accounts are protected. Each membership change records the signed-in editor and the role sets in the security history.
+
+All supervisors cover all departments, including supervisors originally set up for one department. View As opens an active lower-level individual’s perspective. Registers, detail, attachments and Excel exports use that person’s record access. The server rejects purchasing, attachment, membership and owner-operation changes in that mode. The owner’s separate Workspace role control continues to support hands-on practice using built-in sample personas.

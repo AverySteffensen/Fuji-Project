@@ -172,6 +172,7 @@ function access(me: Member) {
   if (
     !hasRole(
       me,
+      "supervisor",
       "admin",
       "accounting",
       "controller",
@@ -180,23 +181,14 @@ function access(me: Member) {
       "treasurer",
     )
   ) {
-    let ownership = "i.requester_id=?";
+    conditions.push("i.requester_id=?");
     values.push(me.id);
-    if (hasRole(me, "supervisor") && me.departments.length) {
-      ownership += ` OR i.department IN (${me.departments.map(() => "?").join(",")})`;
-      values.push(...me.departments);
-    }
-    conditions.push(`(${ownership})`);
   }
   return { conditions, values };
 }
 function approvalClause(me: Member) {
-  const values: unknown[] = [me.id, ...me.roles];
-  let clause = `i.status='Pending' AND i.requester_id<>? AND EXISTS(SELECT 1 FROM json_each(i.review_roles) WHERE value IN (${me.roles.map(() => "?").join(",")}))`;
-  if (me.roles.includes("supervisor")) {
-    clause += ` AND (NOT EXISTS(SELECT 1 FROM json_each(i.review_roles) WHERE value='supervisor') OR i.department IN (${me.departments.length ? me.departments.map(() => "?").join(",") : "NULL"}))`;
-    values.push(...me.departments);
-  }
+  const values = [me.id, ...me.roles];
+  const clause = `i.status='Pending' AND i.requester_id<>? AND EXISTS(SELECT 1 FROM json_each(i.review_roles) WHERE value IN (${me.roles.map(() => "?").join(",")}))`;
   return { clause, values };
 }
 export function registerQuery(

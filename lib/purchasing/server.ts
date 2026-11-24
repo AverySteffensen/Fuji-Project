@@ -2,6 +2,8 @@ import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { BusinessError, canView, hasRole } from "./domain";
 import { DEMO_MEMBERS, buildSeed } from "./seed";
+import { canViewAs, canEditMember } from "./access";
+import { DEPARTMENTS } from "./types";
 import type { Member, Purchase, Audit } from "./types";
 import { indexStatement, rebuildIndex } from "./register-server";
 export const database = () => {
@@ -100,6 +102,8 @@ export async function context(request: Request) {
     .prepare("SELECT data FROM members")
     .all<{ data: string }>();
   const members = rows.results.map((r) => JSON.parse(r.data) as Member);
+  for (const m of members)
+    if (m.roles.includes("supervisor")) m.departments = [...DEPARTMENTS];
   let me = members.find(
     (m) =>
       m.userId === user!.userId ||
@@ -132,6 +136,16 @@ export async function context(request: Request) {
       );
   }
   const actor = request.headers.get("x-demo-member");
+  const viewer = me;
+  const target = request.headers.get("x-view-as");
+  if (target !== null) {
+    if (!["GET", "HEAD"].includes(request.method) || actor)
+      throw new BusinessError("View As is read-only.", 403);
+    const person = members.find((m) => m.id === target);
+    if (!person || !canViewAs(viewer, person))
+      throw new BusinessError("This perspective is unavailable.", 403);
+    me = person;
+  }
   if (actor) {
     if (!owner)
       throw new BusinessError(
@@ -141,7 +155,14 @@ export async function context(request: Request) {
     me = members.find((m) => m.demo && m.id === actor);
     if (!me) throw new BusinessError("Unknown demo persona.");
   }
-  return { me, owner, members, user };
+  return {
+    me,
+    owner: owner && target === null,
+    viewer,
+    readOnly: target !== null,
+    members,
+    user,
+  };
 }
 export async function findPurchase(id: string) {
   const row = await database()
@@ -161,9 +182,12 @@ export async function loadWorkspace(request: Request) {
     me: ctx.me,
     owner: ctx.owner,
     actors: ctx.owner ? ctx.members.filter((m) => m.demo) : [],
-    members: hasRole(ctx.me, "admin")
-      ? ctx.members
-      : ctx.members.map((m) => ({ ...m, email: "" })),
+    readOnly: ctx.readOnly,
+    members: ctx.members.map(({ userId, ...m }) => ({
+      ...m,
+      email:
+        hasRole(ctx.me, "admin") || canEditMember(ctx.me, m) ? m.email : "",
+    })),
     requests: [] as Purchase[],
     audit: [] as Audit[],
     demoMode: ctx.me.demo,

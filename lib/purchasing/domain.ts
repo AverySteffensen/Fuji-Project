@@ -107,7 +107,7 @@ export function canView(m: Member, p: Purchase) {
       "plantmanager",
       "treasurer",
     ) ||
-    (hasRole(m, "supervisor") && m.departments.includes(p.department))
+    hasRole(m, "supervisor")
   );
 }
 export function canApprove(m: Member, p: Purchase) {
@@ -115,10 +115,7 @@ export function canApprove(m: Member, p: Purchase) {
     canView(m, p) &&
     p.status === "Pending" &&
     m.id !== p.requesterId &&
-    nextStep(p).some((r) => m.roles.includes(r)) &&
-    (!m.roles.includes("supervisor") ||
-      !nextStep(p).includes("supervisor") ||
-      m.departments.includes(p.department))
+    nextStep(p).some((r) => m.roles.includes(r))
   );
 }
 export function sanitizeRequest(input: Record<string, any>) {

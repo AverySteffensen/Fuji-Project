@@ -148,6 +148,7 @@ export type Audit = {
   changes?: { field: string; before: unknown; after: unknown }[];
 };
 export type Workspace = {
+  readOnly?: boolean;
   me: Member;
   owner: boolean;
   actors: Member[];

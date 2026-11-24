@@ -21,7 +21,7 @@ flowchart TD
 | D1 table | Purpose |
 | --- | --- |
 | `app_settings` | Stores the owner’s Site ID, initialization markers, operation locks and service check-ins. |
-| `members` | Stores each member’s stable ID, normalized email, linked Site identity, roles, active status and supervisor departments. |
+| `members` | Stores each member’s stable ID, normalized email, linked Site identity, roles, active status and department metadata. |
 | `purchase_requests` | Stores the purchase document, record version and last update. A new submission uses a requester-specific ID derived from the draft’s submission key so a retry can return the same record. |
 | `request_index` | Stores fields used to scope, filter and sort register queries. The register retrieves one page at a time. |
 | `audit_events` | Stores dated purchase changes and decisions, including prior proposal snapshots on resubmission. |
@@ -35,7 +35,7 @@ The purchase document holds line items, competing quotes, approval steps, order 
 
 The first authorized visitor to a new private workspace becomes its owner. The app matches a new member’s verified email to the entry the owner created and binds it to the member’s Site identity. Role changes preserve that identity and the member’s purchase history. App membership and Site access are separate controls. The hosting audience determines who can visit.
 
-An employee can see their requests. Supervisors have access to assigned departments, while Accounting and senior approval roles have wider visibility. A decision also requires the correct role for the current step. Only the owner can switch to a demo persona, and the server restricts each persona to sample records.
+An employee can see their requests. Supervisors have access to requests across all departments, while Accounting and senior approval roles have wider visibility. A decision also requires the correct role for the current step. Only the owner can switch to a demo persona, and the server restricts each persona to sample records.
 
 ## Consistent writes
 
@@ -60,3 +60,5 @@ The daily job runs through a dedicated service endpoint that can start or resume
 A restore stages and verifies the backup before replacing purchasing records. The app preserves later audit events, advances record versions and rebuilds the register index. New members recovered from the backup require access review. Existing member privileges stay current.
 
 A separate, optional Worker in `operations/` probes availability and sends alerts to a configured support destination. Workspace tools displays the daily backup check-in separately from the independent monitor. See the [operations guide](operations.md) for setup and the [verification record](verification.md) for release evidence.
+
+The server resolves a requested read-only perspective only after it checks the signed-in member and both access levels. Listing, detail, downloads and exports use the selected identity. Role edits compare the editor’s current roles and the target’s stored membership at write time.

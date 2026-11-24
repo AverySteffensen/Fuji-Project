@@ -94,7 +94,7 @@ test("one of controller or VP completes the middle tier", () => {
     assert.equal(p.approvals.length, 2);
   }
 });
-test("scope restricts employee and supervisor access and blocks self approval", () => {
+test("supervisors cover every department and requester self approval stays blocked", () => {
   const p = base(),
     own = actor("employee");
   assert.equal(canView(own, p), true);
@@ -102,7 +102,7 @@ test("scope restricts employee and supervisor access and blocks self approval", 
   assert.equal(canApprove({ ...own, roles: ["supervisor"] }, p), false);
   assert.equal(
     canApprove({ ...actor("supervisor"), departments: ["Lab"] }, p),
-    false,
+    true,
   );
   assert.equal(canView(actor("accounting"), p), true);
 });

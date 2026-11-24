@@ -15,6 +15,12 @@ The Fuji Purchasing Register is a spreadsheet-style web app built by East Caroli
 
 **Purchase requests**, **Approvals** and **Purchase history** show one request per row. Users can sort the columns, combine filters and spot overdue requests marked in red. An Excel export includes up to 25,000 matching requests across all pages, in the selected order. Separate request and line-item sheets make it possible to build a PivotTable by department, supplier or part. Dates and amounts keep their spreadsheet types.
 
+## Member access and training
+
+In **People & access**, the owner can add a member and select several operational roles. To update someone already listed, choose **Edit roles** beside their name. A supervisor covers every department. The highest assigned role governs who can edit whose roles. The [access guide](docs/security.md) lists the levels.
+
+For instructor practice, assign the approval roles used by the exercise and Accounting. Have the instructor submit one proposal, then open another person’s pending proposal to practice approval and ordering. **View As** opens an eligible person’s register in read-only mode. **Exit View As** returns to the signed-in account.
+
 ## Run the local demo
 
 Install Git and Node.js 24 or newer. From a terminal, run the following commands. The package manager version matches the one used by this repository’s GitHub Actions workflow.

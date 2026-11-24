@@ -26,3 +26,7 @@ With 3,600 local records and four concurrent callers, the November 21 benchmark 
 ## Remaining hosted checks
 
 A representative restore drill still needs to be timed in an isolated environment. A month of operating history is needed to measure backup retention and availability over that period. Other open checks include hosted performance under load, storage settings, delivery to the real support alert destination, keyboard and small-screen usability, and an idle Accounting session through a full shift. The app uses the hosting provider’s sign-in session. See the [requirements register](requirements.md) and [operations guide](operations.md).
+
+## November 24 access revision
+
+The API regression in `tests/member-access.test.ts` exercises multi-role assignment, legacy supervisor coverage, delegated edits, protected peers, restricted perspectives and blocked changes in View As. The original independent learner score belongs to the original training exercise.
