@@ -1771,6 +1771,7 @@ function RegisterWorkspace({
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
+  const canInspectDirectory = !!w && !w.me.demo && memberLevel(w.me) > 1;
   const canExport = !!w && (w.canExport ?? hasPermission(w.me, "export"));
   const exportData = async () => {
     if (!w || !canExport) return;
@@ -1939,12 +1940,7 @@ function RegisterWorkspace({
         </div>
         <nav className="register-tabs" aria-label="Workspace sections">
           {views
-            .filter(
-              ([id]) =>
-                id !== "people" ||
-                w?.owner ||
-                (w && !w.me.demo && memberLevel(w.me) > 1),
-            )
+            .filter(([id]) => id !== "people" || canInspectDirectory)
             .map(([id, label, Icon]) => (
               <button
                 key={id}
@@ -2487,7 +2483,7 @@ function RegisterWorkspace({
                 </div>
               </section>
             )}
-            {view === "people" && (
+            {view === "people" && canInspectDirectory && (
               <People
                 w={w}
                 request={request}

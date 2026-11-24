@@ -2,7 +2,7 @@ import { env } from "cloudflare:workers";
 import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { BusinessError, canView, hasRole } from "./domain";
 import { DEMO_MEMBERS, buildSeed } from "./seed";
-import { canViewAs, canEditMember } from "./access";
+import { canViewAs, canEditMember, memberLevel } from "./access";
 import { hasPermission } from "./permissions";
 import { DEPARTMENTS } from "./types";
 import type { Member, Purchase, Audit } from "./types";
@@ -182,6 +182,7 @@ export async function getPurchase(id: string) {
 }
 export async function loadWorkspace(request: Request) {
   const ctx = await context(request);
+  const canInspectMembers = !ctx.me.demo && memberLevel(ctx.me) > 1;
   return {
     me: ctx.me,
     owner: ctx.owner,
@@ -191,8 +192,11 @@ export async function loadWorkspace(request: Request) {
       hasPermission(ctx.me, "export") && hasPermission(ctx.viewer, "export"),
     members: ctx.members
       .filter((m) => m.active !== false || canEditMember(ctx.me, m))
-      .map(({ userId, ...m }) => ({
+      .map(({ userId, disabledPermissions, accessVersion, ...m }) => ({
         ...m,
+        ...(canInspectMembers || m.id === ctx.me.id
+          ? { disabledPermissions, accessVersion }
+          : {}),
         email:
           hasRole(ctx.me, "admin") || canEditMember(ctx.me, m) ? m.email : "",
       })),

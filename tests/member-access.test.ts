@@ -391,6 +391,19 @@ test("per-person permissions restrict the allowed role actions and can be restor
   const result = await patchAccess(blocked);
   assert.equal(result.status, 201);
   staff = result.data;
+  const readProfile = async (caller: Request) => {
+    const workspace = await h.read(await h.routes.workspace.GET(caller));
+    return workspace.data.members.find(
+      (m: { id: string }) => m.id === staff.id,
+    );
+  };
+  assert.deepEqual((await readProfile(h.req())).disabledPermissions, blocked);
+  const employeeView = h.req();
+  employeeView.headers.set("x-view-as", "demo-employee");
+  assert.equal(
+    (await readProfile(employeeView)).disabledPermissions,
+    undefined,
+  );
   await h.identity("custom-account", email);
   assert.equal((await h.routes.workspace.GET(h.req())).status, 200);
   assert.equal(
