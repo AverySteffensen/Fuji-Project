@@ -59,4 +59,4 @@ The first live verification included an owner download. On-site acceptance still
 
 ## November 24 access revision
 
-One account may hold multiple operational roles. Supervisors review requests across all departments. Authorized managers can add, edit, remove and re-add lower-level members. Supervisors manage Employee-only accounts. Removing access preserves purchases and approvals. View As provides read-only access to an eligible individual’s register. See the [access-management levels and restrictions](security.md).
+One account may hold multiple operational roles. Supervisors review requests across all departments. Authorized managers can add, edit, remove and re-add lower-level members. Supervisors manage Employee-only accounts. Selecting a member’s name shows their permissions. An authorized manager can adjust individual actions within the assigned roles. Removing access preserves purchases and approvals. View As provides read-only access to an eligible individual’s register. See the [access-management levels and restrictions](security.md).

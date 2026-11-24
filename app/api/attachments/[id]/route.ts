@@ -9,6 +9,7 @@ import {
   handleError,
 } from "@/lib/purchasing/server";
 import { canView, hasRole, BusinessError } from "@/lib/purchasing/domain";
+import { hasPermission } from "@/lib/purchasing/permissions";
 const allowed = ["application/pdf", "image/jpeg", "image/png", "text/plain"];
 export async function POST(
   req: Request,
@@ -18,6 +19,8 @@ export async function POST(
     assertSameOrigin(req);
     const { id } = await params;
     const { me } = await context(req);
+    if (!hasPermission(me, "attach"))
+      throw new BusinessError("Your membership cannot attach files.", 403);
     const p = await getPurchase(id);
     if (
       !canView(me, p) ||

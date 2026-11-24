@@ -1,11 +1,20 @@
 import { context, database, handleError } from "@/lib/purchasing/server";
 import { BusinessError } from "@/lib/purchasing/domain";
+import { hasPermission } from "@/lib/purchasing/permissions";
 import { readFilters, registerQuery } from "@/lib/purchasing/register-server";
 import { createXlsx, purchaseSheets, XLSX_MIME } from "@/lib/purchasing/xlsx";
 import type { Purchase, Audit } from "@/lib/purchasing/types";
 export async function GET(req: Request) {
   try {
     const ctx = await context(req);
+    if (
+      !hasPermission(ctx.me, "export") ||
+      !hasPermission(ctx.viewer, "export")
+    )
+      throw new BusinessError(
+        "Export is unavailable for this membership or perspective.",
+        403,
+      );
     const db = database();
     const filters = readFilters(new URL(req.url));
     const q = registerQuery(ctx.me, filters);

@@ -1,4 +1,5 @@
 import type { Member, Role } from "./types.ts";
+import { hasPermission } from "./permissions.ts";
 
 export const ACCESS_LEVEL: Record<Role, number> = {
   employee: 1,
@@ -14,7 +15,7 @@ export const memberLevel = (m: Member) =>
   Math.max(0, ...m.roles.map((r) => ACCESS_LEVEL[r]));
 
 export function canAssignRole(manager: Member, role: Role) {
-  if (manager.demo || manager.active === false) return false;
+  if (!hasPermission(manager, "manageMembers")) return false;
   const level = memberLevel(manager);
   if (level <= ACCESS_LEVEL.supervisor) {
     return level === ACCESS_LEVEL.supervisor && role === "employee";
@@ -24,8 +25,7 @@ export function canAssignRole(manager: Member, role: Role) {
 
 export function canViewAs(manager: Member, person: Member) {
   return (
-    !manager.demo &&
-    manager.active !== false &&
+    hasPermission(manager, "viewAs") &&
     person.active !== false &&
     manager.id !== person.id &&
     memberLevel(manager) > memberLevel(person)

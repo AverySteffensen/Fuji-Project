@@ -7,6 +7,10 @@ import {
 } from "@/lib/purchasing/server";
 import { BusinessError } from "@/lib/purchasing/domain";
 import { canAssignRole, canEditMember } from "@/lib/purchasing/access";
+import {
+  PERMISSIONS,
+  roleAllowsPermission,
+} from "@/lib/purchasing/permissions";
 import { DEPARTMENTS, ROLES, type Member } from "@/lib/purchasing/types";
 
 export async function POST(req: Request) {
@@ -66,7 +70,7 @@ export async function POST(req: Request) {
 
     if (
       existing &&
-      b.action !== undefined &&
+      (b.action !== undefined || b.disabledPermissions !== undefined) &&
       (b.memberId !== existing.id ||
         b.expectedVersion !== (existing.accessVersion ?? 0))
     )
@@ -80,7 +84,14 @@ export async function POST(req: Request) {
     let roles = existing?.roles ?? [];
     let name = existing?.name ?? "";
     if (action !== "remove") {
-      const selected = b.roles === undefined ? [b.role] : b.roles;
+      const selected =
+        b.roles !== undefined
+          ? b.roles
+          : b.role !== undefined
+            ? [b.role]
+            : action === "edit"
+              ? existing?.roles
+              : undefined;
       if (
         !Array.isArray(selected) ||
         !selected.length ||
@@ -110,7 +121,24 @@ export async function POST(req: Request) {
       demo: false,
       active: action !== "remove",
       accessVersion: (existing?.accessVersion ?? 0) + 1,
+      disabledPermissions:
+        action === "add" ? [] : (existing?.disabledPermissions ?? []),
     };
+    if (b.disabledPermissions !== undefined && action !== "remove") {
+      const selected = b.disabledPermissions;
+      if (
+        !Array.isArray(selected) ||
+        selected.some(
+          (p) => !PERMISSIONS.includes(p) || !roleAllowsPermission(member, p),
+        )
+      )
+        throw new BusinessError(
+          "Choose permissions available to the selected roles.",
+        );
+      member.disabledPermissions = PERMISSIONS.filter((p) =>
+        selected.includes(p),
+      );
+    }
     // Both the target and the manager must still have the reviewed access at commit.
     const editorCheck =
       "EXISTS(SELECT 1 FROM members WHERE id=? AND json_extract(data,'$.roles')=? AND COALESCE(json_extract(data,'$.active'),1)=1 AND COALESCE(json_extract(data,'$.accessVersion'),0)=?)";
@@ -131,6 +159,8 @@ export async function POST(req: Request) {
       memberId: member.id,
       previousRoles: existing?.roles ?? [],
       roles: member.roles,
+      previousDisabledPermissions: existing?.disabledPermissions ?? [],
+      disabledPermissions: member.disabledPermissions,
       wasActive: !!existing && existing.active !== false,
       active: member.active,
       accessVersion: member.accessVersion,

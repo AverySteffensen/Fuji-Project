@@ -3,6 +3,7 @@ import { getChatGPTUser } from "@/app/chatgpt-auth";
 import { BusinessError, canView, hasRole } from "./domain";
 import { DEMO_MEMBERS, buildSeed } from "./seed";
 import { canViewAs, canEditMember } from "./access";
+import { hasPermission } from "./permissions";
 import { DEPARTMENTS } from "./types";
 import type { Member, Purchase, Audit } from "./types";
 import { indexStatement, rebuildIndex } from "./register-server";
@@ -186,6 +187,8 @@ export async function loadWorkspace(request: Request) {
     owner: ctx.owner,
     actors: ctx.owner ? ctx.members.filter((m) => m.demo) : [],
     readOnly: ctx.readOnly,
+    canExport:
+      hasPermission(ctx.me, "export") && hasPermission(ctx.viewer, "export"),
     members: ctx.members
       .filter((m) => m.active !== false || canEditMember(ctx.me, m))
       .map(({ userId, ...m }) => ({

@@ -1,3 +1,5 @@
+import type { Permission } from "./permissions.ts";
+
 export const DEPARTMENTS = [
   "Water (10)",
   "Waste Water (20)",
@@ -48,6 +50,7 @@ export type Member = {
   userId?: string;
   active?: boolean;
   accessVersion?: number;
+  disabledPermissions?: Permission[];
 };
 export type LineItem = {
   description: string;
@@ -150,6 +153,7 @@ export type Audit = {
 };
 export type Workspace = {
   readOnly?: boolean;
+  canExport?: boolean;
   me: Member;
   owner: boolean;
   actors: Member[];

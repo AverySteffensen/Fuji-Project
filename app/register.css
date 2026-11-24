@@ -895,3 +895,8 @@ body {
   .member-list > div { flex-wrap: wrap; }
   .member-actions { flex-basis: 100%; justify-content: flex-start; }
 }
+
+.member-name { border: 0; background: transparent; padding: .2rem 0; text-align: left; font: inherit; font-weight: 650; color: #184f48; cursor: pointer; }
+.member-name:hover, .member-name[aria-pressed="true"] { text-decoration: underline; text-underline-offset: .15rem; }
+.people-form .member-permissions { margin: 1rem 0 .5rem; }
+.people-form .remove-from-profile { display: block; margin-top: 1rem; }

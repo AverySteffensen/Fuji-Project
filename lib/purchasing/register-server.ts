@@ -6,6 +6,7 @@ import {
   type SortField,
 } from "./register.ts";
 import type { Member, Purchase } from "./types.ts";
+import { hasPermission } from "./permissions.ts";
 const columns = [
   "id",
   "version",
@@ -187,6 +188,7 @@ function access(me: Member) {
   return { conditions, values };
 }
 function approvalClause(me: Member) {
+  if (!hasPermission(me, "approve")) return { clause: "0", values: [] };
   const values = [me.id, ...me.roles];
   const clause = `i.status='Pending' AND i.requester_id<>? AND EXISTS(SELECT 1 FROM json_each(i.review_roles) WHERE value IN (${me.roles.map(() => "?").join(",")}))`;
   return { clause, values };

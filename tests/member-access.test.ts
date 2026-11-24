@@ -303,3 +303,177 @@ test("removing and re-adding a member preserves their history and rejects stale 
     ["add", "remove", "re-add"],
   );
 });
+
+test("per-person permissions restrict the allowed role actions and can be restored", async () => {
+  const h = await createHarness();
+  const post = async (body: object) =>
+    h.read(await h.routes.people.POST(h.req("POST", "", body)));
+  const email = "custom-access@example.test";
+  const draft = {
+    department: "Packaging (90)",
+    purchaseType: "Facilities",
+    priority: "Medium",
+    neededBy: "2026-12-15",
+    supplier: "Practice Supply",
+    explanation: "Packing supplies",
+    items: [{ description: "Labels", quantity: 1, unitPrice: 20 }],
+  };
+  const locate = (id: string) => ({ params: Promise.resolve({ id }) });
+  await h.identity();
+  let staff = (
+    await post({
+      action: "add",
+      name: "Custom access",
+      email,
+      roles: ["supervisor", "accounting"],
+    })
+  ).data;
+  const patchAccess = async (disabledPermissions: string[]) =>
+    post({
+      action: "edit",
+      email,
+      memberId: staff.id,
+      expectedVersion: staff.accessVersion,
+      disabledPermissions,
+    });
+  const outside = await h.read(
+    await h.routes.create.POST(h.req("POST", "", draft)),
+  );
+  await h.identity("custom-account", email);
+  const own = await h.read(
+    await h.routes.create.POST(h.req("POST", "", draft)),
+  );
+  const rejectMe = await h.read(
+    await h.routes.create.POST(h.req("POST", "", draft)),
+  );
+  await h.identity();
+  const others = await post({
+    action: "add",
+    name: "Second reviewer",
+    email: "another-reviewer@example.test",
+    roles: ["supervisor"],
+  });
+  await h.identity("second", others.data.email);
+  const rejected = await h.read(
+    await h.routes.update.PATCH(
+      h.req("PATCH", "", {
+        action: "reject",
+        version: 1,
+        note: "Clarify the count",
+      }),
+      locate(rejectMe.data.id),
+    ),
+  );
+  assert.equal(rejected.data.status, "Rejected");
+  const approved = await h.read(
+    await h.routes.update.PATCH(
+      h.req("PATCH", "", { action: "approve", version: 1 }),
+      locate(outside.data.id),
+    ),
+  );
+  assert.equal(approved.data.status, "Approved");
+  await h.identity();
+  const pending = await h.read(
+    await h.routes.create.POST(h.req("POST", "", draft)),
+  );
+  assert.equal((await patchAccess(["unknown"])).status, 400);
+  const blocked = [
+    "submit",
+    "revise",
+    "withdraw",
+    "attach",
+    "export",
+    "approve",
+    "order",
+    "viewAs",
+    "manageMembers",
+  ];
+  const result = await patchAccess(blocked);
+  assert.equal(result.status, 201);
+  staff = result.data;
+  await h.identity("custom-account", email);
+  assert.equal((await h.routes.workspace.GET(h.req())).status, 200);
+  assert.equal(
+    (await h.routes.create.POST(h.req("POST", "", draft))).status,
+    403,
+  );
+  assert.equal((await h.routes.export.GET(h.req())).status, 403);
+  assert.equal(
+    (await h.routes.attachment.POST(h.req("POST"), locate(own.data.id))).status,
+    403,
+  );
+  for (const [purchase, change] of [
+    [pending.data, { action: "approve" }],
+    [own.data, { action: "withdraw" }],
+    [rejected.data, { action: "resubmit", fields: draft }],
+    [
+      approved.data,
+      { action: "order", order: { poNumber: "TEST", orderedAt: "2026-11-24" } },
+    ],
+  ] as const) {
+    assert.equal(
+      (
+        await h.routes.update.PATCH(
+          h.req("PATCH", "", { version: purchase.version, ...change }),
+          locate(purchase.id),
+        )
+      ).status,
+      403,
+    );
+  }
+  assert.equal(
+    (
+      await h.read(
+        await h.routes.register.GET(
+          h.req("GET", "", undefined, "/api/register?view=approvals"),
+        ),
+      )
+    ).data.total,
+    0,
+  );
+  assert.equal(
+    (
+      await post({
+        action: "add",
+        name: "New employee",
+        email: "new@example.test",
+        roles: ["employee"],
+      })
+    ).status,
+    403,
+  );
+  const preview = () => {
+    const req = h.req();
+    req.headers.set("x-view-as", "demo-employee");
+    return req;
+  };
+  assert.equal((await h.routes.workspace.GET(preview())).status, 403);
+  await h.identity();
+  staff = (await patchAccess(["export"])).data;
+  await h.identity("custom-account", email);
+  assert.equal(
+    (await h.read(await h.routes.workspace.GET(preview()))).data.canExport,
+    false,
+  );
+  assert.equal((await h.routes.export.GET(preview())).status, 403);
+  assert.equal(
+    (await h.routes.create.POST(h.req("POST", "", draft))).status,
+    201,
+  );
+  assert.equal(
+    (
+      await h.routes.update.PATCH(
+        h.req("PATCH", "", {
+          version: pending.data.version,
+          action: "approve",
+        }),
+        locate(pending.data.id),
+      )
+    ).status,
+    200,
+  );
+  await h.identity();
+  staff = (await patchAccess([])).data;
+  await h.identity("custom-account", email);
+  assert.equal((await h.routes.export.GET(h.req())).status, 200);
+});

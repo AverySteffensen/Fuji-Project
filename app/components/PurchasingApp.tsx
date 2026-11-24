@@ -5,6 +5,13 @@ import {
   canViewAs,
   memberLevel,
 } from "@/lib/purchasing/access";
+import {
+  PERMISSIONS,
+  PERMISSION_LABELS,
+  hasPermission,
+  roleAllowsPermission,
+  type Permission,
+} from "@/lib/purchasing/permissions";
 import OperationsPanel from "./OperationsPanel";
 import { useState, useEffect, useMemo, useRef, type FormEvent } from "react";
 import {
@@ -985,12 +992,14 @@ function RequestDetail({
           <div className="alert error">
             <strong>Proposal rejected</strong>
             <p>{p.rejectionReason}</p>
-            {!w.readOnly && p.requesterId === w.me.id && (
-              <button className="btn" onClick={onRevise}>
-                <RotateCcw size={15} />
-                Revise & resubmit
-              </button>
-            )}
+            {!w.readOnly &&
+              hasPermission(w.me, "revise") &&
+              p.requesterId === w.me.id && (
+                <button className="btn" onClick={onRevise}>
+                  <RotateCcw size={15} />
+                  Revise & resubmit
+                </button>
+              )}
           </div>
         )}
         {p.status === "Withdrawn" && (
@@ -1114,6 +1123,7 @@ function RequestDetail({
               <div className="row spread">
                 <h3>Supporting documents</h3>
                 {!w.readOnly &&
+                  hasPermission(w.me, "attach") &&
                   (p.requesterId === w.me.id ||
                     hasRole(w.me, "accounting")) && (
                     <label className="btn upload-btn">
@@ -1422,13 +1432,14 @@ function RequestDetail({
           <Printer size={15} />
           Print
         </button>
-        {!w.readOnly && (
+        {!w.readOnly && hasPermission(w.me, "submit") && (
           <button className="btn" onClick={onReorder}>
             <RotateCcw size={15} />
             Reorder
           </button>
         )}
         {!w.readOnly &&
+          hasPermission(w.me, "withdraw") &&
           p.requesterId === w.me.id &&
           p.status === "Pending" &&
           !p.order && (
@@ -1441,7 +1452,7 @@ function RequestDetail({
             </button>
           )}
         {!w.readOnly &&
-          hasRole(w.me, "accounting") &&
+          hasPermission(w.me, "order") &&
           p.status !== "Rejected" &&
           p.status !== "Withdrawn" &&
           (p.status === "Approved" || p.emergency) && (
@@ -1760,8 +1771,9 @@ function RegisterWorkspace({
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
   };
+  const canExport = !!w && (w.canExport ?? hasPermission(w.me, "export"));
   const exportData = async () => {
-    if (!w) return;
+    if (!w || !canExport) return;
     try {
       if (tableView) {
         setExporting(true);
@@ -2000,16 +2012,18 @@ function RegisterWorkspace({
                 </p>
               </div>
               <div className="heading-actions">
-                <button
-                  className="btn export-btn"
-                  onClick={exportData}
-                  disabled={(invalidRange && tableView) || exporting}
-                >
-                  <ArrowDownToLine size={17} />
-                  {exporting ? "Exporting…" : "Export data"}{" "}
-                  <span className="file-type">.xlsx</span>
-                </button>
-                {tableView && !target && (
+                {canExport && (
+                  <button
+                    className="btn export-btn"
+                    onClick={exportData}
+                    disabled={(invalidRange && tableView) || exporting}
+                  >
+                    <ArrowDownToLine size={17} />
+                    {exporting ? "Exporting…" : "Export data"}{" "}
+                    <span className="file-type">.xlsx</span>
+                  </button>
+                )}
+                {tableView && !target && hasPermission(w.me, "submit") && (
                   <button
                     className="btn primary"
                     onClick={() => setForm({ revision: false })}
@@ -2640,6 +2654,7 @@ function People({
 }) {
   const [editing, setEditing] = useState<Member | null>(null);
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [restrictions, setRestrictions] = useState<Permission[]>([]);
   const [name, setName] = useState(""),
     [email, setEmail] = useState("");
   const [roles, setRoles] = useState<Role[]>(["employee"]);
@@ -2648,6 +2663,15 @@ function People({
   const formHeading = useRef<HTMLHeadingElement>(null);
   const manager = !w.readOnly && canAssignRole(w.me, "employee");
   const restoring = editing?.active === false;
+  const editable = manager && (!editing || canEditMember(w.me, editing));
+  const profile = { roles, demo: editing?.demo ?? false };
+  const permittedByRole = PERMISSIONS.filter((permission) =>
+    roleAllowsPermission(profile, permission),
+  );
+  useEffect(() => {
+    if (editing) formHeading.current?.focus();
+  }, [editing]);
+
   const active = w.members.filter((m) => m.active !== false);
   const removed = manager
     ? w.members.filter((m) => m.active === false && canEditMember(w.me, m))
@@ -2657,8 +2681,10 @@ function People({
     setName(m?.name ?? "");
     setEmail(m?.email ?? "");
     setRoles(m && m.active !== false ? m.roles : ["employee"]);
+    setRestrictions(
+      m && m.active !== false ? (m.disabledPermissions ?? []) : [],
+    );
     setError("");
-    if (m) formHeading.current?.focus();
   };
   const removeMember = async () => {
     if (!removing) return;
@@ -2697,7 +2723,15 @@ function People({
             <div key={m.id}>
               <span className="avatar">{initials(m.name)}</span>
               <div className="member-identity">
-                <strong>{m.name}</strong>
+                <button
+                  className="member-name"
+                  aria-label={`Permissions for ${m.name}`}
+                  aria-pressed={editing?.id === m.id}
+                  disabled={busy}
+                  onClick={() => choose(m)}
+                >
+                  {m.name}
+                </button>
                 <small>
                   {[
                     m.email,
@@ -2760,23 +2794,38 @@ function People({
           </details>
         )}
       </section>
-      {manager && (
-        <section className="panel people-form">
+      {(manager || editing) && (
+        <section
+          className="panel people-form"
+          aria-label={editing ? "Member permissions" : "New member"}
+        >
           <h2 ref={formHeading} tabIndex={-1}>
             {restoring
               ? "Re-add member"
               : editing
-                ? "Edit roles"
+                ? editing.name
                 : "Add a member"}
           </h2>
+          {editing && !restoring && (
+            <div className="permission-context">
+              <p>
+                {editing.roles.map((role) => ROLE_NAMES[role]).join(", ")} ·{" "}
+                {editing.demo ? "Sample account" : "Active member"}
+              </p>
+            </div>
+          )}
           {restoring ? (
-            <p>Choose the roles this person should have when they return.</p>
+            <p>
+              Choose the roles and permissions this person needs when they
+              return.
+            </p>
           ) : (
             !editing && <p>Enter the email they use to sign in with ChatGPT.</p>
           )}
           <form
             onSubmit={async (e) => {
               e.preventDefault();
+              if (!editable) return;
               setBusy(true);
               setError("");
               try {
@@ -2788,6 +2837,9 @@ function People({
                     name,
                     email,
                     roles,
+                    disabledPermissions: restrictions.filter((permission) =>
+                      permittedByRole.includes(permission),
+                    ),
                     ...(editing
                       ? {
                           memberId: editing.id,
@@ -2801,7 +2853,7 @@ function People({
                   restoring
                     ? `${name} was re-added.`
                     : editing
-                      ? "Member roles saved."
+                      ? "Member permissions saved."
                       : `${name} was added.`,
                 );
                 choose(null);
@@ -2812,61 +2864,116 @@ function People({
               }
             }}
           >
-            <label>
-              Full name
-              <input
-                required
-                value={name}
-                readOnly={!!editing && !w.owner}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <label>
-              ChatGPT sign-in email
-              <input
-                type="email"
-                required
-                value={email}
-                readOnly={!!editing}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </label>
-            <fieldset className="role-options">
-              <legend>Assigned roles</legend>
-              {Object.entries(ROLE_NAMES).map(([key, label]) => {
-                const role = key as Role;
-                if (!canAssignRole(w.me, role)) return null;
-                return (
-                  <label key={role}>
-                    <input
-                      type="checkbox"
-                      checked={roles.includes(role)}
-                      onChange={(e) =>
-                        setRoles(
-                          e.target.checked
-                            ? [...roles, role]
-                            : roles.filter((r) => r !== role),
+            {editable && (
+              <>
+                <label>
+                  Full name
+                  <input
+                    required
+                    value={name}
+                    readOnly={!!editing && !w.owner}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </label>
+                <label>
+                  ChatGPT sign-in email
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    readOnly={!!editing}
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </label>
+                <fieldset className="role-options">
+                  <legend>Assigned roles</legend>
+                  {Object.entries(ROLE_NAMES).map(([key, label]) => {
+                    const role = key as Role;
+                    if (!canAssignRole(w.me, role)) return null;
+                    return (
+                      <label key={role}>
+                        <input
+                          type="checkbox"
+                          checked={roles.includes(role)}
+                          onChange={(e) =>
+                            setRoles(
+                              e.target.checked
+                                ? [...roles, role]
+                                : roles.filter((r) => r !== role),
+                            )
+                          }
+                        />
+                        {label}
+                      </label>
+                    );
+                  })}
+                </fieldset>
+              </>
+            )}
+            {(editing || roles.length > 0) && (
+              <>
+                <fieldset className="role-options member-permissions">
+                  <legend>Permissions</legend>
+                  {permittedByRole.map((permission) => (
+                    <label key={permission}>
+                      <input
+                        type="checkbox"
+                        checked={!restrictions.includes(permission)}
+                        disabled={!editable || busy}
+                        onChange={(e) =>
+                          setRestrictions(
+                            e.target.checked
+                              ? restrictions.filter((id) => id !== permission)
+                              : [...restrictions, permission],
+                          )
+                        }
+                      />
+                      {PERMISSION_LABELS[permission]}
+                    </label>
+                  ))}
+                </fieldset>
+                <p className="scope-note">
+                  {roles.some((role) => role !== "employee")
+                    ? "Can read purchases across all departments."
+                    : "Can read their own purchase requests."}
+                  {profile.demo && " This account sees sample purchases only."}
+                  {roles.includes("admin") &&
+                    " The workspace owner also manages backups and can switch to sample accounts."}
+                  {roles.includes("supervisor") &&
+                    " Supervisors cover all departments."}
+                  {roleAllowsPermission(profile, "manageMembers") &&
+                    !restrictions.includes("manageMembers") &&
+                    " Can manage these roles: " +
+                      (Object.keys(ROLE_NAMES) as Role[])
+                        .filter((role) =>
+                          canAssignRole(
+                            {
+                              ...w.me,
+                              ...profile,
+                              active: true,
+                              disabledPermissions: restrictions,
+                            },
+                            role,
+                          ),
                         )
-                      }
-                    />
-                    {label}
-                  </label>
-                );
-              })}
-            </fieldset>
-            {roles.includes("supervisor") && (
-              <p>Supervisors cover all departments.</p>
+                        .map((role) => ROLE_NAMES[role])
+                        .join(", ") +
+                      "."}
+                </p>
+              </>
             )}
             {error && !removing && <p role="alert">{error}</p>}
-            <button className="btn primary" disabled={busy || !roles.length}>
-              {busy
-                ? "Saving…"
-                : restoring
-                  ? "Re-add member"
-                  : editing
-                    ? "Save roles"
-                    : "Add member"}
-            </button>
+            {editable && (
+              <button className="btn primary" disabled={busy || !roles.length}>
+                {busy
+                  ? "Saving…"
+                  : restoring
+                    ? "Re-add member"
+                    : editing
+                      ? "Save permissions"
+                      : "Add member"}
+              </button>
+            )}
             {editing && (
               <button
                 type="button"
@@ -2874,7 +2981,20 @@ function People({
                 disabled={busy}
                 onClick={() => choose(null)}
               >
-                Cancel
+                {editable ? "Cancel" : "Close"}
+              </button>
+            )}
+            {editable && editing && !restoring && (
+              <button
+                type="button"
+                className="btn danger remove-from-profile"
+                disabled={busy}
+                onClick={() => {
+                  setError("");
+                  setRemoving(editing);
+                }}
+              >
+                Remove member
               </button>
             )}
           </form>

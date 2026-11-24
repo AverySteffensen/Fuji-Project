@@ -13,6 +13,7 @@ import {
   hasRole,
 } from "@/lib/purchasing/domain";
 import type { Purchase } from "@/lib/purchasing/types";
+import { hasPermission } from "@/lib/purchasing/permissions";
 
 async function digest(value: unknown) {
   const hash = await crypto.subtle.digest(
@@ -27,6 +28,11 @@ async function digest(value: unknown) {
 export async function POST(req: Request) {
   try {
     const { me, members } = await context(req);
+    if (!hasPermission(me, "submit"))
+      throw new BusinessError(
+        "Your membership cannot submit purchase requests.",
+        403,
+      );
     const input = await body(req);
     const fields: ReturnType<typeof sanitizeRequest> &
       Pick<Purchase, "verbalApproverName"> = sanitizeRequest(input);

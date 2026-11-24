@@ -8,6 +8,7 @@ import {
   type ApprovalRoute,
   type Order,
 } from "./types.ts";
+import { hasPermission } from "./permissions.ts";
 export class BusinessError extends Error {
   status: number;
   code?: string;
@@ -112,6 +113,7 @@ export function canView(m: Member, p: Purchase) {
 }
 export function canApprove(m: Member, p: Purchase) {
   return (
+    hasPermission(m, "approve") &&
     canView(m, p) &&
     p.status === "Pending" &&
     m.id !== p.requesterId &&
@@ -284,6 +286,8 @@ export function resubmit(
   input: Record<string, any>,
   now: string,
 ): Purchase {
+  if (!hasPermission(m, "revise"))
+    throw new BusinessError("Your membership cannot revise requests.", 403);
   if (p.requesterId !== m.id || p.status !== "Rejected")
     throw new BusinessError(
       "Only the requester can revise a rejected proposal.",
@@ -312,9 +316,9 @@ export function saveOrder(
 ): Purchase {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new BusinessError("Enter valid order details.");
-  if (!hasRole(m, "accounting"))
+  if (!hasPermission(m, "order"))
     throw new BusinessError(
-      "Only Accounting can enter purchase order information.",
+      "Entering order details requires Accounting with order permission.",
       403,
     );
   if (p.status === "Rejected" || p.status === "Withdrawn")
@@ -379,6 +383,8 @@ export function withdraw(
   reason: unknown,
   now: string,
 ): Purchase {
+  if (!hasPermission(m, "withdraw"))
+    throw new BusinessError("Your membership cannot withdraw requests.", 403);
   if (p.requesterId !== m.id)
     throw new BusinessError(
       "Only the requester can withdraw this proposal.",
