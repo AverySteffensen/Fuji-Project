@@ -33,7 +33,7 @@ The purchase document holds line items, competing quotes, approval steps, order 
 
 ## Identity and record access
 
-The first authorized visitor to a new private workspace becomes its owner. The app matches a new member’s verified email to the entry the owner created and binds it to the member’s Site identity. Role changes preserve that identity and the member’s purchase history. App membership and Site access are separate controls. The hosting audience determines who can visit.
+The first authorized visitor to a new private workspace becomes its owner. The app matches a new member’s verified email to the entry an authorized manager created and binds it to the member’s Site identity. Role changes preserve that identity and the member’s purchase history. App membership and Site access are separate controls. The hosting audience determines who can visit.
 
 An employee can see their requests. Supervisors have access to requests across all departments, while Accounting and senior approval roles have wider visibility. A decision also requires the correct role for the current step. Only the owner can switch to a demo persona, and the server restricts each persona to sample records.
 

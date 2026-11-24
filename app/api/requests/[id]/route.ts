@@ -75,6 +75,7 @@ export async function PATCH(
         const m = members.find((m) => m.id === next.verbalApproverId);
         if (
           !m ||
+          m.active === false ||
           !(next.emergencyCategory === "Production"
             ? hasRole(m, "plantmanager")
             : hasRole(m, "controller", "vicepresident"))
@@ -97,6 +98,7 @@ export async function PATCH(
     } else throw new BusinessError("Unknown action.");
     await writePurchase(
       next,
+      me,
       {
         id: crypto.randomUUID(),
         requestId: id,

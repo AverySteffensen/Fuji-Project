@@ -33,6 +33,18 @@ Tests cover sign-in, active membership, role and record access, HTTPS handling, 
 | 2 | Supervisor |
 | 1 | Employee, Accounting |
 
-The levels govern member administration and preview eligibility. Purchasing actions still require the operational role for the action. A person with several roles receives their combined purchasing permissions. The owner adds members after granting Site access. To edit roles, both the member’s highest existing role and every proposed role must be strictly below the editor’s highest role. The owner and built-in sample accounts are protected. Each membership change records the signed-in editor and the role sets in the security history.
+A member’s highest role determines which memberships they can manage. Each purchase action still requires the corresponding operational role.
+
+| Manager | Roles they can add, edit, remove or re-add |
+| --- | --- |
+| Workspace owner | All operational roles |
+| Vice President | Controller, Plant Manager, Treasurer, Supervisor, Employee and Accounting |
+| Controller, Plant Manager or Treasurer | Supervisor, Employee and Accounting |
+| Supervisor | Employee only |
+| Employee or Accounting | None |
+
+Each role already on the target account and every role being granted must be within the manager’s authority. The owner, the manager’s own membership and built-in sample personas are protected. Site audience settings are managed separately.
+
+In **People & access**, **Remove** asks for confirmation and ends access on the member’s next app request. The member leaves the active directory and its Excel export. Existing purchases and approvals retain the original identity. An eligible manager can open **Removed members**, select **Re-add**, choose fresh roles and confirm. Re-adding preserves the existing sign-in binding. The security history records the manager, time, action and role sets. Stale removal or re-add forms must be reopened.
 
 All supervisors cover all departments, including supervisors originally set up for one department. View As opens an active lower-level individual’s perspective. Registers, detail, attachments and Excel exports use that person’s record access. The server rejects purchasing, attachment, membership and owner-operation changes in that mode. The owner’s separate Workspace role control continues to support hands-on practice using built-in sample personas.

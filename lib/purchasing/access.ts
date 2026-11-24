@@ -12,6 +12,16 @@ export const ACCESS_LEVEL: Record<Role, number> = {
 };
 export const memberLevel = (m: Member) =>
   Math.max(0, ...m.roles.map((r) => ACCESS_LEVEL[r]));
+
+export function canAssignRole(manager: Member, role: Role) {
+  if (manager.demo || manager.active === false) return false;
+  const level = memberLevel(manager);
+  if (level <= ACCESS_LEVEL.supervisor) {
+    return level === ACCESS_LEVEL.supervisor && role === "employee";
+  }
+  return ACCESS_LEVEL[role] < level;
+}
+
 export function canViewAs(manager: Member, person: Member) {
   return (
     !manager.demo &&
@@ -24,9 +34,8 @@ export function canViewAs(manager: Member, person: Member) {
 export function canEditMember(manager: Member, person: Member) {
   return (
     !person.demo &&
-    !person.roles.includes("admin") &&
     manager.id !== person.id &&
-    (canViewAs(manager, person) ||
-      (!manager.demo && manager.roles.includes("admin")))
+    person.roles.length > 0 &&
+    person.roles.every((role) => canAssignRole(manager, role))
   );
 }

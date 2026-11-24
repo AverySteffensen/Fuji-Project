@@ -63,6 +63,7 @@ export async function POST(req: Request) {
       const m = members.find((m) => m.id === fields.verbalApproverId);
       if (
         !m ||
+        m.active === false ||
         !(fields.emergencyCategory === "Production"
           ? hasRole(m, "plantmanager")
           : hasRole(m, "controller", "vicepresident"))
@@ -92,7 +93,7 @@ export async function POST(req: Request) {
       sample: me.demo,
       submissionFingerprint,
     } as Purchase;
-    const saved = await writePurchase(p, {
+    const saved = await writePurchase(p, me, {
       id: crypto.randomUUID(),
       requestId: id,
       action: "Submitted",

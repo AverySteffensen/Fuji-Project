@@ -47,6 +47,7 @@ export type Member = {
   demo: boolean;
   userId?: string;
   active?: boolean;
+  accessVersion?: number;
 };
 export type LineItem = {
   description: string;

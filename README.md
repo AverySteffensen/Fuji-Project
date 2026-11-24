@@ -17,7 +17,7 @@ The Fuji Purchasing Register is a spreadsheet-style web app built by East Caroli
 
 ## Member access and training
 
-In **People & access**, the owner can add a member and select several operational roles. To update someone already listed, choose **Edit roles** beside their name. A supervisor covers every department. The highest assigned role governs who can edit whose roles. The [access guide](docs/security.md) lists the levels.
+In **People & access**, supervisors can add or remove people whose only role is Employee. Higher-level managers can add, edit or remove members whose roles are all below their own highest role. To add someone, enter their ChatGPT sign-in email, choose their roles and select **Add member**. To end access, select **Remove** beside their name and confirm **Remove member**. Their purchasing history stays on record. To restore access, open **Removed members**, select **Re-add** and choose the roles they need now. Supervisors cover every department. The [access guide](docs/security.md) lists the levels.
 
 For instructor practice, assign the approval roles used by the exercise and Accounting. Have the instructor submit one proposal, then open another person’s pending proposal to practice approval and ordering. **View As** opens an eligible person’s register in read-only mode. **Exit View As** returns to the signed-in account.
 

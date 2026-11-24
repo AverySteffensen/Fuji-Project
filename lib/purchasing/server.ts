@@ -102,39 +102,42 @@ export async function context(request: Request) {
     .prepare("SELECT data FROM members")
     .all<{ data: string }>();
   const members = rows.results.map((r) => JSON.parse(r.data) as Member);
-  for (const m of members)
-    if (m.roles.includes("supervisor")) m.departments = [...DEPARTMENTS];
-  let me = members.find(
-    (m) =>
-      m.userId === user!.userId ||
-      (!m.demo &&
+  const signedIn = user;
+  let me =
+    members.find((m) => !m.demo && m.userId === signedIn.userId) ??
+    members.find(
+      (m) =>
+        !m.demo &&
         !m.userId &&
-        m.email.toLowerCase() === user!.email.toLowerCase()),
-  );
+        m.email.toLowerCase() === signedIn.email.toLowerCase(),
+    );
   if (!me)
     throw new BusinessError(
-      "Ask the workspace owner to add your email and role.",
+      "Ask an authorized manager to add your ChatGPT sign-in email.",
       403,
     );
   if (me.active === false)
     throw new BusinessError(
-      "Your membership is inactive. Ask the workspace owner to review your access.",
+      "Your membership is inactive. Ask an authorized manager to review your access.",
       403,
     );
   if (!me.userId) {
-    me = { ...me, userId: user.userId };
-    const result = await database()
+    // Bind only the identity; a sign-in must never undo a concurrent role change or removal.
+    const bound = await database()
       .prepare(
-        "UPDATE members SET data=? WHERE id=? AND (json_extract(data,'$.userId') IS NULL OR json_extract(data,'$.userId')=?)",
+        "UPDATE members SET data=json_set(data,'$.userId',?) WHERE id=? AND email=? AND COALESCE(json_extract(data,'$.active'),1)=1 AND (json_extract(data,'$.userId') IS NULL OR json_extract(data,'$.userId')=?) AND NOT EXISTS(SELECT 1 FROM members WHERE id<>? AND json_extract(data,'$.userId')=?) RETURNING data",
       )
-      .bind(JSON.stringify(me), me.id, user.userId)
-      .run();
-    if (!result.meta.changes)
+      .bind(user.userId, me.id, me.email, user.userId, me.id, user.userId)
+      .first<{ data: string }>();
+    if (!bound)
       throw new BusinessError(
-        "This membership is bound to a different sign-in.",
+        "This membership is unavailable for this sign-in.",
         403,
       );
+    Object.assign(me, JSON.parse(bound.data) as Member);
   }
+  for (const m of members)
+    if (m.roles.includes("supervisor")) m.departments = [...DEPARTMENTS];
   const actor = request.headers.get("x-demo-member");
   const viewer = me;
   const target = request.headers.get("x-view-as");
@@ -183,11 +186,13 @@ export async function loadWorkspace(request: Request) {
     owner: ctx.owner,
     actors: ctx.owner ? ctx.members.filter((m) => m.demo) : [],
     readOnly: ctx.readOnly,
-    members: ctx.members.map(({ userId, ...m }) => ({
-      ...m,
-      email:
-        hasRole(ctx.me, "admin") || canEditMember(ctx.me, m) ? m.email : "",
-    })),
+    members: ctx.members
+      .filter((m) => m.active !== false || canEditMember(ctx.me, m))
+      .map(({ userId, ...m }) => ({
+        ...m,
+        email:
+          hasRole(ctx.me, "admin") || canEditMember(ctx.me, m) ? m.email : "",
+      })),
     requests: [] as Purchase[],
     audit: [] as Audit[],
     demoMode: ctx.me.demo,
@@ -195,11 +200,28 @@ export async function loadWorkspace(request: Request) {
 }
 export async function writePurchase(
   p: Purchase,
+  actor: Member,
   event: Audit,
   expectedVersion?: number,
   extra: D1PreparedStatement[] = [],
 ) {
   const db = database();
+  // A signed-in user can lose access while a form or file upload is being processed.
+  const actorQuery =
+    "SELECT 1 FROM members WHERE id=? AND COALESCE(json_extract(data,'$.active'),1)=1 AND COALESCE(json_extract(data,'$.accessVersion'),0)=?";
+  const actorArgs = [actor.id, actor.accessVersion ?? 0];
+  const assertActorAccess = async () => {
+    if (
+      !(await db
+        .prepare(actorQuery)
+        .bind(...actorArgs)
+        .first())
+    )
+      throw new BusinessError(
+        "Your access changed. Refresh the workspace before continuing.",
+        403,
+      );
+  };
   const previous =
     expectedVersion === undefined ? null : await getPurchase(p.id);
   event.changes = Object.keys(p)
@@ -222,9 +244,16 @@ export async function writePurchase(
     const result = await db.batch([
       db
         .prepare(
-          "INSERT INTO purchase_requests(id,data,version,updated_at) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?) ON CONFLICT(id) DO NOTHING",
+          `INSERT INTO purchase_requests(id,data,version,updated_at) SELECT ?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?) AND EXISTS(${actorQuery}) ON CONFLICT(id) DO NOTHING`,
         )
-        .bind(p.id, JSON.stringify(p), p.version, p.updatedAt, Date.now()),
+        .bind(
+          p.id,
+          JSON.stringify(p),
+          p.version,
+          p.updatedAt,
+          Date.now(),
+          ...actorArgs,
+        ),
       db
         .prepare(
           "INSERT INTO audit_events(id,request_id,data,at) SELECT ?,?,?,? FROM purchase_requests WHERE id=? AND json_extract(data,'$.lastMutationId')=?",
@@ -233,6 +262,7 @@ export async function writePurchase(
       indexStatement(db, p, event.id),
     ]);
     if (!result[0].meta.changes) {
+      await assertActorAccess();
       const existing = await findPurchase(p.id);
       if (existing) return existing;
       throw new BusinessError(
@@ -246,7 +276,7 @@ export async function writePurchase(
   const result = await db.batch([
     db
       .prepare(
-        "UPDATE purchase_requests SET data=?,version=?,updated_at=? WHERE id=? AND version=? AND NOT EXISTS(SELECT 1 FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?)",
+        `UPDATE purchase_requests SET data=?,version=?,updated_at=? WHERE id=? AND version=? AND NOT EXISTS(SELECT 1 FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?) AND EXISTS(${actorQuery})`,
       )
       .bind(
         JSON.stringify(p),
@@ -255,6 +285,7 @@ export async function writePurchase(
         p.id,
         expectedVersion,
         Date.now(),
+        ...actorArgs,
       ),
     db
       .prepare(
@@ -265,6 +296,7 @@ export async function writePurchase(
     indexStatement(db, p, event.id),
   ]);
   if (!result[0].meta.changes) {
+    await assertActorAccess();
     const lock = await db
       .prepare(
         "SELECT value FROM app_settings WHERE key='restore-lock' AND json_extract(value,'$.until')>?",

@@ -1,6 +1,6 @@
 "use client";
 import {
-  ACCESS_LEVEL,
+  canAssignRole,
   canEditMember,
   canViewAs,
   memberLevel,
@@ -685,6 +685,7 @@ function RequestForm({
                   >
                     <option value="">Select approver</option>
                     {members
+                      .filter((m) => m.active !== false)
                       .filter((m) =>
                         f.emergencyCategory === "Production"
                           ? m.roles.includes("plantmanager")
@@ -1812,12 +1813,14 @@ function RegisterWorkspace({
                   name: "People and access",
                   rows: [
                     ["Name", "Email", "Roles", "Departments"],
-                    ...w.members.map((m) => [
-                      m.name,
-                      m.email,
-                      m.roles.map((r) => ROLE_NAMES[r]).join(", "),
-                      m.departments.join(", "),
-                    ]),
+                    ...w.members
+                      .filter((m) => m.active !== false)
+                      .map((m) => [
+                        m.name,
+                        m.email,
+                        m.roles.map((r) => ROLE_NAMES[r]).join(", "),
+                        m.departments.join(", "),
+                      ]),
                   ],
                   widths: [30, 40, 30, 60],
                 },
@@ -2636,32 +2639,64 @@ function People({
   setToast: (s: string) => void;
 }) {
   const [editing, setEditing] = useState<Member | null>(null);
+  const [removing, setRemoving] = useState<Member | null>(null);
   const [name, setName] = useState(""),
     [email, setEmail] = useState("");
   const [roles, setRoles] = useState<Role[]>(["employee"]);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState("");
-  const owner = w.owner && !w.me.demo;
+  const formHeading = useRef<HTMLHeadingElement>(null);
+  const manager = !w.readOnly && canAssignRole(w.me, "employee");
+  const restoring = editing?.active === false;
+  const active = w.members.filter((m) => m.active !== false);
+  const removed = manager
+    ? w.members.filter((m) => m.active === false && canEditMember(w.me, m))
+    : [];
   const choose = (m: Member | null) => {
     setEditing(m);
     setName(m?.name ?? "");
     setEmail(m?.email ?? "");
-    setRoles(m?.roles ?? ["employee"]);
+    setRoles(m && m.active !== false ? m.roles : ["employee"]);
     setError("");
+    if (m) formHeading.current?.focus();
   };
-  const formVisible = !w.readOnly && !w.me.demo && (editing || owner);
+  const removeMember = async () => {
+    if (!removing) return;
+    setBusy(true);
+    setError("");
+    try {
+      await request("/api/members", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "remove",
+          memberId: removing.id,
+          email: removing.email,
+          expectedVersion: removing.accessVersion ?? 0,
+        }),
+      });
+      await refresh();
+      if (editing?.id === removing.id) choose(null);
+      setRemoving(null);
+      setToast(`${removing.name} was removed from the register.`);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <div className="people-grid">
       <section className="panel">
         <div className="panel-header">
           <h2>Workspace members</h2>
-          <span className="count-pill">{w.members.length}</span>
+          <span className="count-pill">{active.length}</span>
         </div>
         <div className="member-list">
-          {w.members.map((m) => (
+          {active.map((m) => (
             <div key={m.id}>
               <span className="avatar">{initials(m.name)}</span>
-              <div>
+              <div className="member-identity">
                 <strong>{m.name}</strong>
                 <small>
                   {[
@@ -2669,35 +2704,75 @@ function People({
                     m.roles.includes("supervisor")
                       ? "All departments"
                       : m.departments.map(shortDept).join(", "),
-                    m.active === false ? "Inactive" : "",
                   ]
                     .filter(Boolean)
                     .join(" · ")}
                 </small>
                 <small>{m.roles.map((r) => ROLE_NAMES[r]).join(", ")}</small>
               </div>
-              {!w.readOnly && canEditMember(w.me, m) && (
-                <button
-                  className="btn"
-                  disabled={busy}
-                  aria-label={`Edit roles for ${m.name}`}
-                  onClick={() => choose(m)}
-                >
-                  Edit roles
-                </button>
+              {manager && canEditMember(w.me, m) && (
+                <span className="member-actions">
+                  <button
+                    className="btn"
+                    disabled={busy}
+                    aria-label={`Edit roles for ${m.name}`}
+                    onClick={() => choose(m)}
+                  >
+                    Edit roles
+                  </button>
+                  <button
+                    className="btn"
+                    disabled={busy}
+                    aria-label={`Remove ${m.name} from register`}
+                    onClick={() => {
+                      setError("");
+                      setRemoving(m);
+                    }}
+                  >
+                    Remove
+                  </button>
+                </span>
               )}
             </div>
           ))}
         </div>
+        {removed.length > 0 && (
+          <details className="removed-members">
+            <summary>Removed members ({removed.length})</summary>
+            <div className="member-list">
+              {removed.map((m) => (
+                <div key={m.id}>
+                  <div className="member-identity">
+                    <strong>{m.name}</strong>
+                    <small>{m.email}</small>
+                  </div>
+                  <button
+                    className="btn"
+                    disabled={busy}
+                    aria-label={`Re-add ${m.name}`}
+                    onClick={() => choose(m)}
+                  >
+                    Re-add
+                  </button>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
       </section>
-      {formVisible && (
+      {manager && (
         <section className="panel people-form">
-          <h2>{editing ? "Edit roles" : "Add a member"}</h2>
-          {owner && !editing && (
-            <p>
-              Grant Site access separately, then use the person’s ChatGPT
-              sign-in email.
-            </p>
+          <h2 ref={formHeading} tabIndex={-1}>
+            {restoring
+              ? "Re-add member"
+              : editing
+                ? "Edit roles"
+                : "Add a member"}
+          </h2>
+          {restoring ? (
+            <p>Choose the roles this person should have when they return.</p>
+          ) : (
+            !editing && <p>Enter the email they use to sign in with ChatGPT.</p>
           )}
           <form
             onSubmit={async (e) => {
@@ -2709,17 +2784,27 @@ function People({
                   method: "POST",
                   headers: { "Content-Type": "application/json" },
                   body: JSON.stringify({
+                    action: editing && !restoring ? "edit" : "add",
                     name,
                     email,
                     roles,
                     ...(editing
-                      ? { expectedRoles: editing.roles }
-                      : { createOnly: true }),
+                      ? {
+                          memberId: editing.id,
+                          expectedVersion: editing.accessVersion ?? 0,
+                        }
+                      : {}),
                   }),
                 });
                 await refresh();
+                setToast(
+                  restoring
+                    ? `${name} was re-added.`
+                    : editing
+                      ? "Member roles saved."
+                      : `${name} was added.`,
+                );
                 choose(null);
-                setToast("Member roles saved.");
               } catch (e) {
                 setError((e as Error).message);
               } finally {
@@ -2732,7 +2817,7 @@ function People({
               <input
                 required
                 value={name}
-                readOnly={!owner}
+                readOnly={!!editing && !w.owner}
                 onChange={(e) => setName(e.target.value)}
               />
             </label>
@@ -2750,7 +2835,7 @@ function People({
               <legend>Assigned roles</legend>
               {Object.entries(ROLE_NAMES).map(([key, label]) => {
                 const role = key as Role;
-                if (ACCESS_LEVEL[role] >= memberLevel(w.me)) return null;
+                if (!canAssignRole(w.me, role)) return null;
                 return (
                   <label key={role}>
                     <input
@@ -2772,9 +2857,15 @@ function People({
             {roles.includes("supervisor") && (
               <p>Supervisors cover all departments.</p>
             )}
-            {error && <p role="alert">{error}</p>}
+            {error && !removing && <p role="alert">{error}</p>}
             <button className="btn primary" disabled={busy || !roles.length}>
-              {busy ? "Saving…" : "Save member"}
+              {busy
+                ? "Saving…"
+                : restoring
+                  ? "Re-add member"
+                  : editing
+                    ? "Save roles"
+                    : "Add member"}
             </button>
             {editing && (
               <button
@@ -2788,6 +2879,45 @@ function People({
             )}
           </form>
         </section>
+      )}
+      {removing && manager && (
+        <Modal
+          title="Remove member?"
+          onClose={() => {
+            if (!busy) {
+              setRemoving(null);
+              setError("");
+            }
+          }}
+        >
+          <div className="modal-body">
+            <p>
+              <strong>{removing.name}</strong> ({removing.email}) will lose
+              access to the purchasing register. Their requests, approvals, and
+              purchasing history will stay on record.
+            </p>
+            {error && <p role="alert">{error}</p>}
+          </div>
+          <div className="modal-footer">
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={() => {
+                setRemoving(null);
+                setError("");
+              }}
+            >
+              Keep member
+            </button>
+            <button
+              className="btn danger"
+              disabled={busy}
+              onClick={removeMember}
+            >
+              {busy ? "Removing…" : "Remove member"}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );

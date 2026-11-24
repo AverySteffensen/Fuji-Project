@@ -58,6 +58,7 @@ export async function POST(
     try {
       await writePurchase(
         { ...p, attachments: [...p.attachments, attachment], updatedAt: at },
+        me,
         {
           id: eventId,
           requestId: id,

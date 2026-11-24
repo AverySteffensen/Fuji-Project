@@ -30,7 +30,7 @@ For local development, `pnpm dev` creates any missing backup key and operations 
 2. When the snapshot is complete, select **Verify**. This checks its signed manifest, data parts and attachment checksums while current purchases remain available.
 3. To replace the current purchasing records with a snapshot, select **Restore**, type the exact confirmation shown for that snapshot and select **Restore purchasing records**. The app captures a safety snapshot before replacing the records.
 4. During the restore, reads continue and purchasing updates are paused. The app verifies the data and copies attachments to new private storage keys, then replaces purchasing records and attachment metadata, advances record versions and rebuilds the register index. Existing audit history is retained.
-5. Existing members keep their current permissions. A directory entry recovered for a missing member starts inactive. The owner can review and reactivate it under **People & access**.
+5. Existing members keep their current permissions. A directory entry recovered for a missing member starts inactive. An authorized manager can open **People & access → Removed members**, select **Re-add** and choose the appropriate roles.
 
 If the D1 backup catalog is lost but R2 and the original signing key survive, apply the database migrations, establish the private workspace owner and select **Find stored backups**. The app verifies the signed manifests in R2 and rebuilds the catalog for unexpired backups. To recover from loss of both stores, use a separately retained archive and its original key.
 
